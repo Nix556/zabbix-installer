@@ -1,6 +1,6 @@
 # Zabbix Installer
 
-This repository contains scripts to install, configure, and uninstall Zabbix server and agent on a Linux system. It also includes a script to manage hosts via the Zabbix API.
+This repository contains scripts to install, configure, and uninstall Zabbix server and agent on Debian 12. It also includes a script to manage hosts via the Zabbix API.
 
 ---
 
