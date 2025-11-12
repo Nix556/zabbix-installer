@@ -1,15 +1,15 @@
 #!/bin/bash
 source lib/colors.sh
-source lib/utils.sh
-source lib/system.sh
-source lib/db.sh
 
-echo -e "${RED}This will uninstall Zabbix and remove all configurations.${NC}"
-read -rp "Are you sure? [y/N]: " CONFIRM
-[[ "$CONFIRM" != "y" ]] && exit 0
+confirm "Are you sure you want to remove Zabbix and all its data?" || exit 0
 
-systemctl stop zabbix-server zabbix-agent apache2 mysql 2>/dev/null
-apt-get remove --purge -y zabbix-server-mysql zabbix-frontend-php zabbix-agent apache2 mariadb-server mariadb-client
-rm -rf /etc/zabbix /var/lib/mysql /var/log/zabbix /var/www/html/zabbix config/zabbix_api.conf
+info "Stopping Zabbix services..."
+sudo systemctl stop zabbix-server zabbix-agent apache2
 
-echo -e "${GREEN}Uninstallation complete.${NC}"
+info "Removing packages..."
+sudo apt purge -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent apache2 mariadb-server mariadb-client php*
+
+info "Removing Zabbix files..."
+sudo rm -rf /etc/zabbix /usr/share/zabbix /var/log/zabbix /var/lib/mysql
+
+success "Zabbix fully removed."
