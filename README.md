@@ -26,6 +26,7 @@ zabbix-installer/
 │   ├─ system.sh
 │   └─ db.sh
 └─ config/
+    └─ zabbix_api.conf   # generated automatically after install
 ```
 
 If you are using the GitHub version:
