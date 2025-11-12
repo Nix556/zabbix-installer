@@ -65,39 +65,39 @@ info "Installing required packages..."
 run_with_spinner sudo $PM install -y wget curl gnupg2 software-properties-common lsb-release \
     apache2 mariadb-server mariadb-client php8.2 php8.2-mysql php8.2-gd \
     php8.2-bcmath php8.2-mbstring php8.2-xml php8.2-ldap php8.2-curl jq
-success "Prerequisites installed ✅"
+success "Prerequisites installed"
 
 info "Adding Zabbix 7.4 repository..."
 run_with_spinner bash -c "wget -q https://repo.zabbix.com/zabbix/7.4/${OS}/$(lsb_release -cs)/amd64/zabbix-release_7.4-1+${OS}$(lsb_release -rs)_all.deb && \
     sudo dpkg -i zabbix-release_7.4-1+${OS}$(lsb_release -rs)_all.deb >/dev/null && sudo $PM update -y >/dev/null"
-success "Zabbix repository added ✅"
+success "Zabbix repository added"
 
 info "Installing Zabbix server, frontend, and agent..."
 run_with_spinner sudo $PM install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf \
     zabbix-sql-scripts zabbix-agent >/dev/null
-success "Zabbix installed ✅"
+success "Zabbix installed"
 
 info "Creating Zabbix database..."
 run_with_spinner create_zabbix_db "$DB_NAME" "$DB_USER" "$DB_PASS" "$ROOT_PASS"
-success "Database created ✅"
+success "Database created"
 
 info "Importing initial schema..."
 run_with_spinner bash -c "zcat /usr/share/doc/zabbix-sql-scripts/mysql/create.sql.gz | mysql -u'$DB_USER' -p'$DB_PASS' '$DB_NAME'"
-success "Schema imported ✅"
+success "Schema imported"
 
 info "Configuring Zabbix server..."
 sudo sed -i "s/^DBName=.*/DBName=$DB_NAME/" /etc/zabbix/zabbix_server.conf
 sudo sed -i "s/^DBUser=.*/DBUser=$DB_USER/" /etc/zabbix/zabbix_server.conf
 sudo sed -i "s/^# DBPassword=.*/DBPassword=$DB_PASS/" /etc/zabbix/zabbix_server.conf
-success "Zabbix server configuration updated ✅"
+success "Zabbix server configuration updated"
 
 info "Starting Zabbix services..."
 run_with_spinner sudo systemctl enable --now zabbix-server zabbix-agent apache2
-success "Services started ✅"
+success "Services started"
 
 info "Setting Zabbix Admin password..."
 run_with_spinner sudo mysql -uroot -p"$ROOT_PASS" "$DB_NAME" -e "UPDATE users SET passwd=MD5('$ZABBIX_ADMIN_PASS') WHERE alias='Admin';"
-success "Admin password set ✅"
+success "Admin password set"
 
 info "Generating API configuration..."
 mkdir -p config
@@ -106,7 +106,7 @@ ZABBIX_URL="http://$ZABBIX_IP/zabbix"
 ZABBIX_USER="Admin"
 ZABBIX_PASS="$ZABBIX_ADMIN_PASS"
 EOF
-success "API config generated at config/zabbix_api.conf ✅"
+success "API config generated at config/zabbix_api.conf"
 
 success "Zabbix 7.4 installation complete!"
 echo "Frontend URL: http://$ZABBIX_IP/zabbix"
