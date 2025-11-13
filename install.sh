@@ -62,7 +62,9 @@ if [[ "$OS_NAME" == "Debian" ]]; then
 else
     ZBX_REPO_URL="https://repo.zabbix.com/zabbix/7.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.4-1+${DEB_CODENAME}_all.deb"
 fi
-run_cmd "wget -qO /tmp/zabbix-release.deb $ZBX_REPO_URL"
+
+# Download and install without hiding output
+run_cmd "wget -O /tmp/zabbix-release.deb $ZBX_REPO_URL"
 run_cmd "dpkg -i /tmp/zabbix-release.deb"
 run_cmd "apt update -y"
 success "Zabbix repository added"
