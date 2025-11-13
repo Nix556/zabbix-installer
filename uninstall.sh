@@ -1,59 +1,65 @@
 #!/bin/bash
-set -e
-source lib/colors.sh
-source lib/utils.sh
-source lib/system.sh
 
-spinner() {
-    local pid=$!
-    local delay=0.1
-    local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\b\b\b\b\b\b"
-    done
+set -e
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="$BASE_DIR/lib"
+source "$LIB_DIR/colors.sh"
+source "$LIB_DIR/utils.sh"
+source "$LIB_DIR/system.sh"
+source "$LIB_DIR/db.sh"
+
+run_cmd() {
+    if [[ $EUID -eq 0 ]]; then
+        bash -c "$1"
+    else
+        sudo bash -c "$1"
+    fi
 }
 
-run_with_spinner() { "$@" & spinner; }
+echo ""
+warn "This will completely remove Zabbix server, agent, database, and web interface."
+read -rp "Are you sure you want to continue? (y/N): " CONFIRM
+[[ "${CONFIRM,,}" != "y" ]] && { info "Aborted."; exit 0; }
 
-info "This will completely remove Zabbix and all related data."
-if ! confirm "Are you sure you want to proceed?"; then
-    warning "Uninstallation cancelled."
-    exit 0
+ZBX_CONF="/etc/zabbix/zabbix_server.conf"
+
+if [[ -f "$ZBX_CONF" ]]; then
+    ZABBIX_DB_NAME=$(grep -E '^DBName=' "$ZBX_CONF" | cut -d'=' -f2)
+    ZABBIX_DB_USER=$(grep -E '^DBUser=' "$ZBX_CONF" | cut -d'=' -f2)
+    [[ -z "$ZABBIX_DB_NAME" ]] && ZABBIX_DB_NAME="zabbix"
+    [[ -z "$ZABBIX_DB_USER" ]] && ZABBIX_DB_USER="zabbix"
+    info "Detected database: $ZABBIX_DB_NAME"
+    info "Detected user: $ZABBIX_DB_USER"
+else
+    warn "Zabbix config not found, using defaults."
+    ZABBIX_DB_NAME="zabbix"
+    ZABBIX_DB_USER="zabbix"
 fi
 
-info "Stopping Zabbix services..."
-run_with_spinner sudo systemctl stop zabbix-server zabbix-agent apache2
+read -rp "Enter MariaDB root password (for DB removal): " DB_ROOT_PASS
+
+info "Stopping Zabbix and Apache services..."
+run_cmd "systemctl stop zabbix-server zabbix-agent apache2 || true"
 success "Services stopped"
 
-info "Removing Zabbix packages..."
-run_with_spinner sudo apt purge -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf \
-    zabbix-sql-scripts zabbix-agent apache2 mariadb-server mariadb-client php* >/dev/null
+info "Dropping Zabbix database and user..."
+(
+    sleep 1
+    run_cmd "mysql -u root -p\"$DB_ROOT_PASS\" -e 'DROP DATABASE IF EXISTS \`$ZABBIX_DB_NAME\`; DROP USER IF EXISTS \`$ZABBIX_DB_USER\`@\"localhost\";'"
+    sleep 1
+) &
+
+show_spinner $! "Dropping database..." "Database and user dropped"
+
+info "Removing Zabbix, Apache, and MariaDB packages..."
+run_cmd "apt remove -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent apache2 mariadb-server >/dev/null"
+run_cmd "apt autoremove -y >/dev/null"
 success "Packages removed"
 
-info "Removing configuration files and logs..."
-run_with_spinner sudo rm -rf /etc/zabbix /usr/share/zabbix /var/log/zabbix
-success "Configs and logs removed"
+info "Cleaning up configuration files and cache..."
+run_cmd "rm -rf /etc/zabbix /var/log/zabbix /var/lib/mysql /etc/apache2/conf-enabled/zabbix.conf"
+run_cmd "rm -rf $BASE_DIR/config/zabbix_api.conf 2>/dev/null || true"
+success "Configuration cleaned up"
 
-if [[ -f /etc/zabbix/zabbix_server.conf ]]; then
-    DB_NAME=$(grep "^DBName=" /etc/zabbix/zabbix_server.conf | cut -d= -f2)
-    DB_USER=$(grep "^DBUser=" /etc/zabbix/zabbix_server.conf | cut -d= -f2)
-else
-    DB_NAME="zabbix"
-    DB_USER="zabbix"
-    warning "Could not detect DB info, using defaults: $DB_NAME / $DB_USER"
-fi
-
-info "Dropping Zabbix database ($DB_NAME) and user ($DB_USER)..."
-read -rp "Enter MariaDB root password: " ROOT_PASS
-run_with_spinner sudo mysql -uroot -p"$ROOT_PASS" -e "DROP DATABASE IF EXISTS \`$DB_NAME\`; DROP USER IF EXISTS '$DB_USER'@'localhost';"
-success "Database and user removed"
-
-info "Removing API config..."
-run_with_spinner rm -rf config/zabbix_api.conf
-success "API config removed"
-
-success "Zabbix fully uninstalled!"
+success "Zabbix uninstallation complete!"
+echo "All services, database, and configuration files have been removed."
