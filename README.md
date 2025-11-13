@@ -1,69 +1,71 @@
-# Zabbix Installer
+# Zabbix Installer (v7.4)
 
-This repository contains scripts to install, configure, and uninstall Zabbix server and agent on **Debian 12** and **Ubuntu 22.04**. It also includes a script to manage hosts via the Zabbix API, supporting both interactive and automated CLI usage.
+[![Development Status](https://img.shields.io/badge/status-in_development-yellow)](https://github.com/Nix556/Zabbix-Installer)
+[![Platform](https://img.shields.io/badge/platform-Debian_12_|_Ubuntu_22.04-blue)]()
+[![Zabbix Version](https://img.shields.io/badge/Zabbix-7.4-orange)]()
+[![License](https://img.shields.io/badge/license-MIT-green)]()
+
+> **Note:** This project is still in development and may not work perfectly yet.
+
+---
+
+## Overview
+
+This repository provides **interactive Bash scripts** to install, configure, and uninstall **Zabbix 7.4** (Server + Frontend + Agent) on **Debian 12** or **Ubuntu 22.04**.  
+It also includes a `zabbix_api.sh` script for managing hosts through the **Zabbix API**.
+
+Everything is automated — repository setup, MariaDB configuration, Apache/PHP setup, and frontend generation.
 
 ---
 
 ## Quick Start Example
 
-Install Zabbix 7.4, set admin password, and add a host in one go:
+Install and configure Zabbix 7.4 interactively, then manage hosts via the API:
 
 ```bash
 # Make scripts executable
 chmod +x install.sh uninstall.sh zabbix_api.sh
 chmod +x lib/*.sh
 
-# Run installer interactively
+# Run installer (interactive)
 sudo ./install.sh
 
-# Add a host non-interactively (replace with your IP/template IDs)
-sudo ./zabbix_api.sh add-host \
-  --host-name "web01" \
-  --visible-name "Web Server 01" \
-  --group-id 2 \
-  --interface '[{"type":1,"main":1,"useip":1,"ip":"192.168.1.10","dns":"","port":"10050"}]' \
-  --template '[{"templateid":10001}]'
+# Add a host via API (example)
+sudo ./zabbix_api.sh add-host   --host-name "web01"   --visible-name "Web Server 01"   --group-id 2   --interface '[{"type":1,"main":1,"useip":1,"ip":"192.168.1.10","dns":"","port":"10050"}]'   --template '[{"templateid":10001}]'
 ```
-
-This example installs Zabbix server + agent, Apache + PHP, configures MariaDB, and adds a host with a template automatically.
 
 ---
 
-## 1. Clone or Create the Repository
-
-### If you already have files locally:
-
-```bash
-mkdir ~/zabbix-installer
-cd ~/zabbix-installer
-```
-
-Ensure the directory structure matches:
+## Project Structure
 
 ```
 zabbix-installer/
-├─ install.sh
-├─ uninstall.sh
-├─ zabbix_api.sh
+├─ install.sh             # Full interactive installer (Debian 12 / Ubuntu 22.04)
+├─ uninstall.sh           # Clean uninstaller (removes all Zabbix components)
+├─ zabbix_api.sh          # Manage Zabbix hosts via API
 ├─ lib/
-│   ├─ colors.sh
-│   ├─ utils.sh
-│   ├─ system.sh
-│   └─ db.sh
+│   ├─ colors.sh          # Common color variables
+│   ├─ utils.sh           # Helper functions
+│   ├─ system.sh          # Service controls
+│   └─ db.sh              # Database management helpers
 └─ config/
-    └─ zabbix_api.conf   # generated automatically after install
-```
-
-### If using GitHub:
-
-```bash
-git clone https://github.com/Nix556/Zabbix-Installer.git zabbix-installer
-cd zabbix-installer
+    └─ zabbix_api.conf    # Generated automatically after installation
 ```
 
 ---
 
-## 2. Make Scripts Executable
+## Installation Steps
+
+### 1. Prepare System
+
+Clone the repo and enter the directory:
+
+```bash
+git clone https://github.com/Nix556/Zabbix-Installer.git
+cd Zabbix-Installer
+```
+
+Make sure scripts are executable:
 
 ```bash
 chmod +x install.sh uninstall.sh zabbix_api.sh
@@ -72,94 +74,75 @@ chmod +x lib/*.sh
 
 ---
 
-## 3. Run the Installer
+### 2. Run the Installer
+
+Run interactively:
 
 ```bash
 sudo ./install.sh
 ```
 
-Interactive prompts include:
+The script will ask for:
 
-* MariaDB root password
-* Zabbix database name, user, and password
-* Zabbix server IP
-* Zabbix admin password
+- MariaDB root password  
+- Zabbix database name, user, and password  
+- Zabbix server IP  
+- Zabbix frontend admin password  
 
-Everything else is automated:
+It automatically installs:
 
-* MariaDB database and user for Zabbix
-* Apache + PHP 8.2
-* Zabbix server and agent
-* Zabbix API configuration (`config/zabbix_api.conf`)
+- Zabbix server, frontend, and agent  
+- MariaDB and Apache + PHP  
+- Repository and schema setup  
+- Config files + frontend credentials  
 
-After installation, the script shows:
+At the end, it shows:
 
 ```
 Frontend URL: http://<ZABBIX_IP>/zabbix
 Admin user: Admin
-Admin password: <your-chosen-password>
+Admin password: <your-password>
 ```
 
 ---
 
-## 4. Run the Zabbix API Script
+## Zabbix API Script
 
-### Interactive Mode
+The `zabbix_api.sh` tool works both interactively and via CLI automation.
 
-```bash
-sudo ./zabbix_api.sh
-```
+### Example Commands
 
-Follow prompts to:
-
-* List hosts
-* Add hosts (supports multiple interfaces and templates)
-* Remove hosts
-
-The script validates:
-
-* IP addresses
-* Group IDs
-* Template IDs
-
-### Automated CLI Mode
-
-**List hosts:**
+List hosts:
 
 ```bash
 sudo ./zabbix_api.sh list-hosts
 ```
 
-**Add host with multiple interfaces/templates:**
+Add a host with templates:
 
 ```bash
-sudo ./zabbix_api.sh add-host \
-  --host-name "web01" \
-  --visible-name "Web Server 01" \
-  --group-id 2 \
-  --interface '[{"type":1,"main":1,"useip":1,"ip":"192.168.1.10","dns":"","port":"10050"},{"type":1,"main":1,"useip":1,"ip":"10.0.0.10","dns":"","port":"10050"}]' \
-  --template '[{"templateid":10001},{"templateid":10002}]'
+sudo ./zabbix_api.sh add-host   --host-name "web01"   --visible-name "Web Server 01"   --group-id 2   --interface '[{"type":1,"main":1,"useip":1,"ip":"192.168.1.10","dns":"","port":"10050"}]'   --template '[{"templateid":10001},{"templateid":10002}]'
 ```
 
-| Argument         | Description                                      |
-| ---------------- | ------------------------------------------------ |
-| `--host-name`    | Required host name                               |
-| `--visible-name` | Optional, defaults to host name                  |
-| `--group-id`     | Zabbix host group ID (default 2 = Linux servers) |
-| `--interface`    | JSON array of interfaces (IP + port)             |
-| `--template`     | JSON array of template IDs                       |
+| Argument | Description |
+|-----------|-------------|
+| `--host-name` | Required host name |
+| `--visible-name` | Optional, defaults to host name |
+| `--group-id` | Host group ID (default: `2` = Linux servers) |
+| `--interface` | JSON array of interfaces (IP + port) |
+| `--template` | JSON array of template IDs |
 
-**Remove a host:**
+Remove a host:
 
 ```bash
 sudo ./zabbix_api.sh remove-host
 ```
 
-Lists hosts and prompts for host ID.
-
 ---
 
-## 5. Uninstallation
+## Uninstallation
+
+Remove Zabbix completely:
 
 ```bash
 sudo ./uninstall.sh
@@ -167,19 +150,29 @@ sudo ./uninstall.sh
 
 Removes:
 
-* Zabbix server
-* Zabbix agent
-* MariaDB
-* Apache + PHP
-* All configuration files, logs, and API cache
+- Zabbix server, agent, and frontend  
+- MariaDB (optional cleanup)  
+- Apache + PHP configs  
+- `/etc/zabbix/` and `/var/log/zabbix/`  
+- Drops Zabbix DB and user  
 
-The uninstaller automatically detects the Zabbix database and user from `/etc/zabbix/zabbix_server.conf`.
+The script automatically detects credentials from `/etc/zabbix/zabbix_server.conf`.
 
 ---
 
-## 6. Notes
+## Notes
 
-* Supports **Debian 12** and **Ubuntu 22.04**
-* API script works interactively or via CLI for automation
-* Multiple interfaces and templates supported when adding hosts
-* `jq` is required and installed automatically
+- Supported OS: Debian 12 and Ubuntu 22.04  
+- Zabbix version: 7.4 (latest)  
+- PHP timezone: Auto-detected and configured  
+- Schema: Imported automatically  
+- API config: Stored in `config/zabbix_api.conf`  
+- Privileges: Requires root or sudo  
+- Status: Tested in development environments only  
+
+---
+
+## License
+
+This project is licensed under the MIT License.  
+See the [LICENSE](LICENSE) file for details.
