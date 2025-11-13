@@ -5,20 +5,25 @@ export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 set -euo pipefail
 IFS=$'\n\t'
 
+# Colors
 RED="\033[0;31m"
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 NC="\033[0m"
 
+# Detect OS
 echo -e "${GREEN}[INFO] Detecting OS...${NC}"
 OS_NAME=$(lsb_release -si)
 OS_VER=$(lsb_release -sr)
+
 if [[ "$OS_NAME" != "Debian" || "$OS_VER" != "12"* ]]; then
     echo -e "${RED}[ERROR] This script only supports Debian 12.${NC}"
     exit 1
 fi
+
 echo -e "${GREEN}[OK] OS detected: Debian $OS_VER${NC}"
 
+# User input
 read -rp "Enter Zabbix Server IP [127.0.0.1]: " ZABBIX_IP
 ZABBIX_IP=${ZABBIX_IP:-127.0.0.1}
 
@@ -45,17 +50,22 @@ done
 read -rp "Enter Zabbix Admin password (frontend) [zabbix]: " ZABBIX_ADMIN_PASS
 ZABBIX_ADMIN_PASS=${ZABBIX_ADMIN_PASS:-zabbix}
 
+# Summary
 echo -e "${GREEN}[INFO] Configuration summary:${NC}"
 echo "DB: $ZABBIX_DB_NAME / $ZABBIX_DB_USER"
 echo "Zabbix IP: $ZABBIX_IP"
 echo "Zabbix Admin password: $ZABBIX_ADMIN_PASS"
 
+# Install prerequisites
 echo -e "${GREEN}[INFO] Installing required packages...${NC}"
 apt update -y
-apt install -y wget curl gnupg2 lsb-release jq apt-transport-https mariadb-server apache2 \
-php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip
+apt install -y wget curl gnupg2 lsb-release jq apt-transport-https \
+    mariadb-server apache2 php php-mysql php-xml php-bcmath php-mbstring \
+    php-ldap php-json php-gd php-zip
+
 echo -e "${GREEN}[OK] Prerequisites installed${NC}"
 
+# Add Zabbix repo
 echo -e "${GREEN}[INFO] Adding Zabbix 7.4 repository...${NC}"
 ZABBIX_DEB="/tmp/zabbix-release.deb"
 wget -qO "$ZABBIX_DEB" "https://repo.zabbix.com/zabbix/7.4/release/debian/pool/main/z/zabbix-release/zabbix-release_latest_7.4+debian12_all.deb"
@@ -63,11 +73,14 @@ dpkg -i "$ZABBIX_DEB"
 apt update -y
 echo -e "${GREEN}[OK] Zabbix repository added${NC}"
 
+# Install Zabbix packages
 echo -e "${GREEN}[INFO] Installing Zabbix server, frontend, and agent...${NC}"
 apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf \
-zabbix-agent zabbix-sql-scripts snmpd fping libsnmp40 php-curl
+    zabbix-agent zabbix-sql-scripts snmpd fping libsnmp40 php-curl
+
 echo -e "${GREEN}[OK] Zabbix installed${NC}"
 
+# Create database and user
 echo -e "${GREEN}[INFO] Creating Zabbix database and user...${NC}"
 mysql -u root -p"$DB_ROOT_PASS" <<MYSQL_SCRIPT
 CREATE DATABASE IF NOT EXISTS $ZABBIX_DB_NAME character set utf8mb4 collate utf8mb4_bin;
@@ -77,7 +90,10 @@ FLUSH PRIVILEGES;
 MYSQL_SCRIPT
 echo -e "${GREEN}[OK] Database created${NC}"
 
+# Import schema
 echo -e "${GREEN}[INFO] Importing initial schema...${NC}"
+
+# Detect schema path
 SQL_PATH=$(find /usr/share -type d -name "zabbix-sql-scripts" -print -quit)
 if [[ -z "$SQL_PATH" ]]; then
     echo -e "${RED}[ERROR] Zabbix SQL scripts folder not found.${NC}"
@@ -91,15 +107,25 @@ for sqlfile in schema.sql images.sql data.sql; do
     elif [[ -f "$SQL_PATH/mysql/$sqlfile.gz" ]]; then
         echo -e "${GREEN}[INFO] Importing $sqlfile.gz...${NC}"
         zcat "$SQL_PATH/mysql/$sqlfile.gz" | mysql -u"$ZABBIX_DB_USER" -p"$ZABBIX_DB_PASS" "$ZABBIX_DB_NAME"
+    elif [[ -f "/usr/share/doc/zabbix-sql-scripts/mysql/$sqlfile" ]]; then
+        echo -e "${GREEN}[INFO] Importing $sqlfile from /usr/share/doc/...${NC}"
+        mysql -u"$ZABBIX_DB_USER" -p"$ZABBIX_DB_PASS" "$ZABBIX_DB_NAME" < "/usr/share/doc/zabbix-sql-scripts/mysql/$sqlfile"
+    elif [[ -f "/usr/share/doc/zabbix-sql-scripts/mysql/$sqlfile.gz" ]]; then
+        echo -e "${GREEN}[INFO] Importing $sqlfile.gz from /usr/share/doc/...${NC}"
+        zcat "/usr/share/doc/zabbix-sql-scripts/mysql/$sqlfile.gz" | mysql -u"$ZABBIX_DB_USER" -p"$ZABBIX_DB_PASS" "$ZABBIX_DB_NAME"
     else
         echo -e "${YELLOW}[WARN] $sqlfile not found, skipping.${NC}"
     fi
 done
+
 echo -e "${GREEN}[OK] Schema imported${NC}"
 
+# Configure Zabbix server
 sed -i "s/^DBPassword=.*/DBPassword=$ZABBIX_DB_PASS/" /etc/zabbix/zabbix_server.conf
 
+# Enable and start services
 systemctl enable zabbix-server zabbix-agent apache2
+systemctl start apache2
 systemctl start zabbix-server zabbix-agent
 systemctl reload apache2
 
