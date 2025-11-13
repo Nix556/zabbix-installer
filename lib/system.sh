@@ -1,11 +1,11 @@
 detect_os() {
     if [[ -f /etc/debian_version ]]; then
-        OS="debian"
-        VER=$(cut -d. -f1 /etc/debian_version)
+        OS_NAME="Debian"
+        OS_VERSION=$(cut -d. -f1 /etc/debian_version)
         PM="apt"
     elif [[ -f /etc/lsb-release ]]; then
-        OS="ubuntu"
-        VER=$(lsb_release -rs)
+        OS_NAME="Ubuntu"
+        OS_VERSION=$(lsb_release -rs)
         PM="apt"
     else
         error "Unsupported OS"
@@ -14,5 +14,9 @@ detect_os() {
 }
 
 update_system() {
-    sudo $PM update -y
+    if [[ $EUID -eq 0 ]]; then
+        $PM update -y
+    else
+        sudo $PM update -y
+    fi
 }
