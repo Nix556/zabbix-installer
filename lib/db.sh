@@ -1,5 +1,3 @@
-#!/bin/bash
-
 create_zabbix_db() {
     local DB_NAME="$1"
     local DB_USER="$2"
@@ -11,7 +9,7 @@ create_zabbix_db() {
         return 1
     fi
 
-    echo "[INFO] Creating Zabbix database and user..."
+    info "Creating Zabbix database and user..."
     mysql_cmd="CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; \
                CREATE USER IF NOT EXISTS '\`$DB_USER\`'@'localhost' IDENTIFIED BY '$DB_PASS'; \
                GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '\`$DB_USER\`'@'localhost'; \
@@ -34,7 +32,7 @@ drop_zabbix_db() {
         return 1
     fi
 
-    echo "[INFO] Dropping Zabbix database and user..."
+    info "Dropping Zabbix database and user..."
     mysql_cmd="DROP DATABASE IF EXISTS \`$DB_NAME\`; \
                DROP USER IF EXISTS '\`$DB_USER\`'@'localhost';"
 
