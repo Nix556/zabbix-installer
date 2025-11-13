@@ -1,6 +1,8 @@
 #!/bin/bash
-
 set -e
+
+export PATH=$PATH:/sbin:/usr/sbin:/usr/local/sbin
+
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$BASE_DIR/lib"
 CONFIG_DIR="$BASE_DIR/config"
@@ -23,27 +25,22 @@ info "Detecting OS..."
 detect_os
 success "OS detected: $OS_NAME $OS_VERSION"
 
-read -rp "Enter Zabbix Server IP:  [127.0.0.1]: " ZABBIX_IP
-ZABBIX_IP=${ZABBIX_IP:-127.0.0.1}
-
-while true; do
-    if validate_ip "$ZABBIX_IP"; then break; else warn "Invalid IP address"; fi
-    read -rp "Enter a valid Zabbix Server IP: " ZABBIX_IP
+ZABBIX_IP=$(ask "Enter Zabbix Server IP:" "127.0.0.1")
+while ! validate_ip "$ZABBIX_IP"; do
+    warn "Invalid IP address"
+    ZABBIX_IP=$(ask "Enter a valid Zabbix Server IP:" "$ZABBIX_IP")
 done
 
-read -rp "Enter Zabbix DB name:  [zabbix]: " ZABBIX_DB_NAME
-ZABBIX_DB_NAME=${ZABBIX_DB_NAME:-zabbix}
-
-read -rp "Enter Zabbix DB user:  [zabbix]: " ZABBIX_DB_USER
-ZABBIX_DB_USER=${ZABBIX_DB_USER:-zabbix}
+ZABBIX_DB_NAME=$(ask "Enter Zabbix DB name:" "zabbix")
+ZABBIX_DB_USER=$(ask "Enter Zabbix DB user:" "zabbix")
 
 while true; do
-    read -rp "Enter Zabbix DB password:  []: " ZABBIX_DB_PASS
+    read -rp "Enter Zabbix DB password: []: " ZABBIX_DB_PASS
     [[ -n "$ZABBIX_DB_PASS" ]] && break || warn "Password cannot be empty"
 done
 
-read -rp "Enter MariaDB root password:  []: " DB_ROOT_PASS
-read -rp "Enter Zabbix Admin password (frontend):  [zabbix]: " ZABBIX_ADMIN_PASS
+read -rp "Enter MariaDB root password: []: " DB_ROOT_PASS
+read -rp "Enter Zabbix Admin password (frontend): [zabbix]: " ZABBIX_ADMIN_PASS
 ZABBIX_ADMIN_PASS=${ZABBIX_ADMIN_PASS:-zabbix}
 
 echo ""
@@ -54,18 +51,24 @@ echo "Zabbix Admin password: $ZABBIX_ADMIN_PASS"
 echo ""
 
 info "Installing required packages..."
-run_cmd "apt update -y >/dev/null"
-run_cmd "apt install -y wget curl gnupg2 lsb-release jq apt-transport-https mariadb-server apache2 php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip >/dev/null"
+run_cmd "apt update -y"
+run_cmd "apt install -y wget curl gnupg2 lsb-release jq apt-transport-https mariadb-server apache2 php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip"
 success "Prerequisites installed"
 
 info "Adding Zabbix 7.4 repository..."
-run_cmd "wget -qO- https://repo.zabbix.com/zabbix/7.4/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/pool/main/z/zabbix-release/zabbix-release_7.4-1+$(lsb_release -cs)_all.deb -O /tmp/zabbix-release.deb"
-run_cmd "dpkg -i /tmp/zabbix-release.deb >/dev/null"
-run_cmd "apt update -y >/dev/null"
+DEB_CODENAME=$(lsb_release -cs | tr '[:upper:]' '[:lower:]')
+if [[ "$OS_NAME" == "Debian" ]]; then
+    ZBX_REPO_URL="https://repo.zabbix.com/zabbix/7.4/debian/pool/main/z/zabbix-release/zabbix-release_7.4-1+${DEB_CODENAME}_all.deb"
+else
+    ZBX_REPO_URL="https://repo.zabbix.com/zabbix/7.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.4-1+${DEB_CODENAME}_all.deb"
+fi
+run_cmd "wget -qO /tmp/zabbix-release.deb $ZBX_REPO_URL"
+run_cmd "dpkg -i /tmp/zabbix-release.deb"
+run_cmd "apt update -y"
 success "Zabbix repository added"
 
 info "Installing Zabbix server, frontend, and agent..."
-run_cmd "apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent >/dev/null"
+run_cmd "apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent"
 success "Zabbix installed"
 
 info "Creating Zabbix database..."
@@ -74,12 +77,11 @@ success "Database created"
 
 info "Importing initial schema..."
 SCHEMA_FILE=$(find /usr/share -type f -name "server.sql.gz" 2>/dev/null | head -n1)
-
 if [[ -f "$SCHEMA_FILE" ]]; then
     run_cmd "zcat $SCHEMA_FILE | mysql -u\"$ZABBIX_DB_USER\" -p\"$ZABBIX_DB_PASS\" \"$ZABBIX_DB_NAME\""
     success "Schema imported"
 else
-    error "Zabbix SQL schema not found! Please verify zabbix-sql-scripts package."
+    error "Zabbix SQL schema not found! Verify zabbix-sql-scripts package."
     exit 1
 fi
 
@@ -96,7 +98,7 @@ run_cmd "sed -i 's@^;date.timezone =.*@date.timezone = Europe/Copenhagen@' $PHP_
 success "PHP configured"
 
 info "Starting Zabbix and Apache..."
-run_cmd "systemctl enable zabbix-server zabbix-agent apache2 >/dev/null"
+run_cmd "systemctl enable zabbix-server zabbix-agent apache2"
 run_cmd "systemctl restart zabbix-server zabbix-agent apache2"
 success "Services started"
 
