@@ -1,4 +1,7 @@
 #!/bin/bash
+
+export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
+
 set -euo pipefail
 IFS=$'\n\t'
 
