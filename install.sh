@@ -58,12 +58,12 @@ success "Prerequisites installed"
 info "Adding Zabbix 7.4 repository..."
 DEB_CODENAME=$(lsb_release -cs | tr '[:upper:]' '[:lower:]')
 if [[ "$OS_NAME" == "Debian" ]]; then
-    ZBX_REPO_URL="https://repo.zabbix.com/zabbix/7.4/debian/pool/main/z/zabbix-release/zabbix-release_7.4-1+${DEB_CODENAME}_all.deb"
+    # Use bullseye_all.deb for Debian 12
+    ZBX_REPO_URL="https://repo.zabbix.com/zabbix/7.4/debian/pool/main/z/zabbix-release/zabbix-release_7.4-1+bullseye_all.deb"
 else
     ZBX_REPO_URL="https://repo.zabbix.com/zabbix/7.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.4-1+${DEB_CODENAME}_all.deb"
 fi
 
-# Download and install without hiding output
 run_cmd "wget -O /tmp/zabbix-release.deb $ZBX_REPO_URL"
 run_cmd "dpkg -i /tmp/zabbix-release.deb"
 run_cmd "apt update -y"
