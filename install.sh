@@ -1,112 +1,113 @@
 #!/bin/bash
+
 set -e
-source lib/colors.sh
-source lib/utils.sh
-source lib/system.sh
-source lib/db.sh
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="$BASE_DIR/lib"
+CONFIG_DIR="$BASE_DIR/config"
+mkdir -p "$CONFIG_DIR"
 
-spinner() {
-    local pid=$!
-    local delay=0.1
-    local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\b\b\b\b\b\b"
-    done
-}
+source "$LIB_DIR/colors.sh"
+source "$LIB_DIR/utils.sh"
+source "$LIB_DIR/system.sh"
+source "$LIB_DIR/db.sh"
 
-run_with_spinner() { "$@" & spinner; }
-
-validate_ip() {
-    local ip=$1
-    if [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        for i in $(echo $ip | tr '.' ' '); do
-            if ((i < 0 || i > 255)); then return 1; fi
-        done
-        return 0
+run_cmd() {
+    if [[ $EUID -eq 0 ]]; then
+        bash -c "$1"
     else
-        return 1
+        sudo bash -c "$1"
     fi
 }
 
 info "Detecting OS..."
 detect_os
-success "OS detected: $OS $VER"
+success "OS detected: $OS_NAME $OS_VERSION"
+
+read -rp "Enter Zabbix Server IP:  [127.0.0.1]: " ZABBIX_IP
+ZABBIX_IP=${ZABBIX_IP:-127.0.0.1}
 
 while true; do
-    ZABBIX_IP=$(ask "Enter Zabbix Server IP: " "127.0.0.1")
-    if validate_ip "$ZABBIX_IP"; then break; else warning "Invalid IP"; fi
+    if validate_ip "$ZABBIX_IP"; then break; else warn "Invalid IP address"; fi
+    read -rp "Enter a valid Zabbix Server IP: " ZABBIX_IP
 done
 
-DB_NAME=$(ask "Enter Zabbix DB name: " "zabbix")
-DB_USER=$(ask "Enter Zabbix DB user: " "zabbix")
+read -rp "Enter Zabbix DB name:  [zabbix]: " ZABBIX_DB_NAME
+ZABBIX_DB_NAME=${ZABBIX_DB_NAME:-zabbix}
+
+read -rp "Enter Zabbix DB user:  [zabbix]: " ZABBIX_DB_USER
+ZABBIX_DB_USER=${ZABBIX_DB_USER:-zabbix}
+
 while true; do
-    DB_PASS=$(ask "Enter Zabbix DB password: " "")
-    [[ -n "$DB_PASS" ]] && break || warning "Password cannot be empty"
-done
-while true; do
-    ROOT_PASS=$(ask "Enter MariaDB root password: " "")
-    [[ -n "$ROOT_PASS" ]] && break || warning "Root password cannot be empty"
-done
-while true; do
-    ZABBIX_ADMIN_PASS=$(ask "Enter Zabbix Admin password (frontend): " "zabbix")
-    [[ -n "$ZABBIX_ADMIN_PASS" ]] && break || warning "Password cannot be empty"
+    read -rp "Enter Zabbix DB password:  []: " ZABBIX_DB_PASS
+    [[ -n "$ZABBIX_DB_PASS" ]] && break || warn "Password cannot be empty"
 done
 
+read -rp "Enter MariaDB root password:  []: " DB_ROOT_PASS
+read -rp "Enter Zabbix Admin password (frontend):  [zabbix]: " ZABBIX_ADMIN_PASS
+ZABBIX_ADMIN_PASS=${ZABBIX_ADMIN_PASS:-zabbix}
+
+echo ""
 info "Configuration summary:"
-echo "DB: $DB_NAME / $DB_USER"
+echo "DB: $ZABBIX_DB_NAME / $ZABBIX_DB_USER"
 echo "Zabbix IP: $ZABBIX_IP"
 echo "Zabbix Admin password: $ZABBIX_ADMIN_PASS"
+echo ""
 
 info "Installing required packages..."
-run_with_spinner sudo $PM install -y wget curl gnupg2 software-properties-common lsb-release \
-    apache2 mariadb-server mariadb-client php8.2 php8.2-mysql php8.2-gd \
-    php8.2-bcmath php8.2-mbstring php8.2-xml php8.2-ldap php8.2-curl jq
+run_cmd "apt update -y >/dev/null"
+run_cmd "apt install -y wget curl gnupg2 lsb-release jq apt-transport-https mariadb-server apache2 php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip >/dev/null"
 success "Prerequisites installed"
 
 info "Adding Zabbix 7.4 repository..."
-run_with_spinner bash -c "wget -q https://repo.zabbix.com/zabbix/7.4/${OS}/$(lsb_release -cs)/amd64/zabbix-release_7.4-1+${OS}$(lsb_release -rs)_all.deb && \
-    sudo dpkg -i zabbix-release_7.4-1+${OS}$(lsb_release -rs)_all.deb >/dev/null && sudo $PM update -y >/dev/null"
+run_cmd "wget -qO- https://repo.zabbix.com/zabbix/7.4/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/pool/main/z/zabbix-release/zabbix-release_7.4-1+$(lsb_release -cs)_all.deb -O /tmp/zabbix-release.deb"
+run_cmd "dpkg -i /tmp/zabbix-release.deb >/dev/null"
+run_cmd "apt update -y >/dev/null"
 success "Zabbix repository added"
 
 info "Installing Zabbix server, frontend, and agent..."
-run_with_spinner sudo $PM install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf \
-    zabbix-sql-scripts zabbix-agent >/dev/null
+run_cmd "apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent >/dev/null"
 success "Zabbix installed"
 
 info "Creating Zabbix database..."
-run_with_spinner create_zabbix_db "$DB_NAME" "$DB_USER" "$DB_PASS" "$ROOT_PASS"
+create_zabbix_db "$ZABBIX_DB_NAME" "$ZABBIX_DB_USER" "$ZABBIX_DB_PASS" "$DB_ROOT_PASS"
 success "Database created"
 
 info "Importing initial schema..."
-run_with_spinner bash -c "zcat /usr/share/doc/zabbix-sql-scripts/mysql/create.sql.gz | mysql -u'$DB_USER' -p'$DB_PASS' '$DB_NAME'"
-success "Schema imported"
+SCHEMA_FILE=$(find /usr/share -type f -name "server.sql.gz" 2>/dev/null | head -n1)
+
+if [[ -f "$SCHEMA_FILE" ]]; then
+    run_cmd "zcat $SCHEMA_FILE | mysql -u\"$ZABBIX_DB_USER\" -p\"$ZABBIX_DB_PASS\" \"$ZABBIX_DB_NAME\""
+    success "Schema imported"
+else
+    error "Zabbix SQL schema not found! Please verify zabbix-sql-scripts package."
+    exit 1
+fi
 
 info "Configuring Zabbix server..."
-sudo sed -i "s/^DBName=.*/DBName=$DB_NAME/" /etc/zabbix/zabbix_server.conf
-sudo sed -i "s/^DBUser=.*/DBUser=$DB_USER/" /etc/zabbix/zabbix_server.conf
-sudo sed -i "s/^# DBPassword=.*/DBPassword=$DB_PASS/" /etc/zabbix/zabbix_server.conf
-success "Zabbix server configuration updated"
+ZABBIX_CONF="/etc/zabbix/zabbix_server.conf"
+run_cmd "sed -i \"s/^# DBHost=.*/DBHost=localhost/\" $ZABBIX_CONF"
+run_cmd "sed -i \"s/^# DBName=.*/DBName=$ZABBIX_DB_NAME/\" $ZABBIX_CONF"
+run_cmd "sed -i \"s/^# DBUser=.*/DBUser=$ZABBIX_DB_USER/\" $ZABBIX_CONF"
+run_cmd "sed -i \"s/^# DBPassword=.*/DBPassword=$ZABBIX_DB_PASS/\" $ZABBIX_CONF"
+success "Zabbix server configured"
 
-info "Starting Zabbix services..."
-run_with_spinner sudo systemctl enable --now zabbix-server zabbix-agent apache2
+PHP_INI="/etc/php/*/apache2/php.ini"
+run_cmd "sed -i 's@^;date.timezone =.*@date.timezone = Europe/Copenhagen@' $PHP_INI"
+success "PHP configured"
+
+info "Starting Zabbix and Apache..."
+run_cmd "systemctl enable zabbix-server zabbix-agent apache2 >/dev/null"
+run_cmd "systemctl restart zabbix-server zabbix-agent apache2"
 success "Services started"
 
-info "Setting Zabbix Admin password..."
-run_with_spinner sudo mysql -uroot -p"$ROOT_PASS" "$DB_NAME" -e "UPDATE users SET passwd=MD5('$ZABBIX_ADMIN_PASS') WHERE alias='Admin';"
-success "Admin password set"
-
 info "Generating API configuration..."
-mkdir -p config
-cat > config/zabbix_api.conf <<EOF
+cat > "$CONFIG_DIR/zabbix_api.conf" <<EOF
+# Zabbix API configuration
 ZABBIX_URL="http://$ZABBIX_IP/zabbix"
 ZABBIX_USER="Admin"
 ZABBIX_PASS="$ZABBIX_ADMIN_PASS"
 EOF
-success "API config generated at config/zabbix_api.conf"
+success "API configuration generated at config/zabbix_api.conf"
 
 success "Zabbix 7.4 installation complete!"
 echo "Frontend URL: http://$ZABBIX_IP/zabbix"
