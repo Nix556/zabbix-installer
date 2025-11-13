@@ -119,23 +119,7 @@ fi
 
 sed -i "s/^DBPassword=.*/DBPassword=$ZABBIX_DB_PASS/" /etc/zabbix/zabbix_server.conf
 
-# Ensure Zabbix Agent config exists
-AGENT_CONF="/etc/zabbix/zabbix_agentd.conf"
-
-if [[ ! -f "$AGENT_CONF" ]]; then
-    echo -e "${GREEN}[INFO] Creating default Zabbix agent configuration...${NC}"
-    cat > "$AGENT_CONF" <<EOF
-PidFile=/var/run/zabbix/zabbix_agentd.pid
-LogFile=/var/log/zabbix/zabbix_agentd.log
-Server=$ZABBIX_IP
-ServerActive=$ZABBIX_IP
-Hostname=$(hostname)
-Include=/etc/zabbix/zabbix_agentd.d/*.conf
-EOF
-    echo -e "${GREEN}[OK] Zabbix agent configuration created at $AGENT_CONF${NC}"
-fi
-
-# Automatic PHP timezone detection and update
+# --- Automatic PHP timezone detection and update ---
 echo -e "${GREEN}[INFO] Configuring PHP timezone for Apache...${NC}"
 
 PHP_INI=$(php --ini | grep "Loaded Configuration" | awk -F: '{print $2}' | xargs)
@@ -151,7 +135,7 @@ else
     echo -e "${YELLOW}[WARN] PHP configuration file not found, timezone not set.${NC}"
 fi
 
-# Automatic creation of zabbix.conf.php
+# --- Automatic creation of zabbix.conf.php ---
 echo -e "${GREEN}[INFO] Creating Zabbix frontend configuration...${NC}"
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
 
@@ -173,11 +157,31 @@ chown www-data:www-data "$FRONTEND_CONF"
 chmod 640 "$FRONTEND_CONF"
 echo -e "${GREEN}[OK] Zabbix frontend configuration created at $FRONTEND_CONF${NC}"
 
+# --- Ensure minimal Zabbix agent config exists for Debian 12 ---
+AGENT_CONF_DIR="/etc/zabbix/zabbix_agentd.d"
+AGENT_MAIN_CONF="$AGENT_CONF_DIR/zabbix_agentd.conf"
+
+if [[ ! -f "$AGENT_MAIN_CONF" ]]; then
+    echo -e "${GREEN}[INFO] Creating minimal Zabbix agent config...${NC}"
+    cat > "$AGENT_MAIN_CONF" <<EOF
+PidFile=/run/zabbix/zabbix_agentd.pid
+LogFile=/var/log/zabbix/zabbix_agentd.log
+Server=$ZABBIX_IP
+ServerActive=$ZABBIX_IP
+Hostname=$(hostname)
+Include=/etc/zabbix/zabbix_agentd.d/*.conf
+EOF
+    chown root:root "$AGENT_MAIN_CONF"
+    chmod 644 "$AGENT_MAIN_CONF"
+    echo -e "${GREEN}[OK] Zabbix agent config created at $AGENT_MAIN_CONF${NC}"
+fi
+
 # Reload Apache and enable services
 echo -e "${GREEN}[INFO] Enabling and starting services...${NC}"
 systemctl enable zabbix-server zabbix-agent apache2
 systemctl restart apache2
-systemctl start zabbix-server zabbix-agent
+systemctl restart zabbix-agent
+systemctl start zabbix-server
 
 echo -e "${GREEN}[OK] Zabbix server and agent started. Apache reloaded.${NC}"
 echo -e "${GREEN}[INFO] Installation complete! Access frontend at http://$ZABBIX_IP/zabbix${NC}"
