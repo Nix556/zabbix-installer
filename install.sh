@@ -1,6 +1,5 @@
 #!/bin/bash
 # zabbix 7.4 installer for Debian 12 / Ubuntu 22.04
-# fully interactive, fixes agent config issue
 
 export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 set -euo pipefail
@@ -71,7 +70,7 @@ apt update -y
 # install zabbix server, frontend, agent
 echo -e "${GREEN}[INFO] Installing Zabbix packages...${NC}"
 DEBIAN_FRONTEND=noninteractive apt install -y \
-    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent
+    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent
 
 # configure database
 echo -e "${GREEN}[INFO] Configuring MariaDB...${NC}"
@@ -79,43 +78,26 @@ mysql -uroot -p"$ROOT_PASS" <<EOF
 CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
 GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
-SET GLOBAL log_bin_trust_function_creators = 1;
 FLUSH PRIVILEGES;
 EOF
 
 echo -e "${GREEN}[INFO] Importing initial Zabbix schema...${NC}"
 zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | mysql --default-character-set=utf8mb4 -u"$DB_USER" -p"$DB_PASS" "$DB_NAME"
 
-# disable log_bin_trust_function_creators for safety
-mysql -uroot -p"$ROOT_PASS" -e "SET GLOBAL log_bin_trust_function_creators = 0;"
-
 # configure zabbix server
 echo -e "${GREEN}[INFO] Configuring Zabbix server...${NC}"
 sed -i "s|^# DBPassword=.*|DBPassword=$DB_PASS|" /etc/zabbix/zabbix_server.conf
 
-# check if zabbix_agentd.conf exists; create if missing
-if [[ ! -f /etc/zabbix/zabbix_agentd.conf ]]; then
-    echo -e "${GREEN}[INFO] Creating minimal zabbix_agentd.conf...${NC}"
-    cat > /etc/zabbix/zabbix_agentd.conf <<EOF
-PidFile=/run/zabbix/zabbix_agentd.pid
-LogFile=/var/log/zabbix/zabbix_agentd.log
-Include=/etc/zabbix/zabbix_agentd.d/*.conf
-EOF
-    chown root:root /etc/zabbix/zabbix_agentd.conf
-    chmod 644 /etc/zabbix/zabbix_agentd.conf
-fi
-
-# configure zabbix agent
+# configure zabbix agent using directory-based config
 echo -e "${GREEN}[INFO] Configuring Zabbix agent...${NC}"
-AGENT_CONF_FILE="/etc/zabbix/zabbix_agentd.d/agent.conf"
 mkdir -p /etc/zabbix/zabbix_agentd.d
-cat > "$AGENT_CONF_FILE" <<EOF
+cat > /etc/zabbix/zabbix_agentd.d/agent.conf <<EOF
 Server=$ZABBIX_IP
 ServerActive=$ZABBIX_IP
 Hostname=$(hostname)
 EOF
-chown root:root "$AGENT_CONF_FILE"
-chmod 644 "$AGENT_CONF_FILE"
+chown root:root /etc/zabbix/zabbix_agentd.d/agent.conf
+chmod 644 /etc/zabbix/zabbix_agentd.d/agent.conf
 
 # configure php timezone
 echo -e "${GREEN}[INFO] Setting PHP timezone...${NC}"
