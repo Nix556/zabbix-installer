@@ -1,6 +1,6 @@
 #!/bin/bash
-# Zabbix 7.4 uninstaller for Debian 12 / Ubuntu 22.04
-# Stops services, removes packages, configuration, and database
+# Zabbix 7.4 Uninstaller for Debian 12 / Ubuntu 22.04
+# Completely removes Zabbix server, agent, frontend, configs, and database
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -17,8 +17,8 @@ if [[ "$CONFIRM" != "yes" ]]; then
     exit 0
 fi
 
-# Stop services
-echo -e "${GREEN}[INFO] stopping Zabbix and Apache services...${NC}"
+# Stop Zabbix and Apache services
+echo -e "${GREEN}[INFO] Stopping Zabbix and Apache services...${NC}"
 systemctl stop zabbix-server zabbix-agent apache2 || true
 systemctl disable zabbix-server zabbix-agent apache2 || true
 
@@ -37,41 +37,43 @@ DB_NAME=${DB_NAME:-zabbix}
 echo -e "${YELLOW}[WARNING] This will DROP the database '$DB_NAME'!${NC}"
 read -rp "Are you sure? (yes/no): " DB_CONFIRM
 if [[ "$DB_CONFIRM" == "yes" ]]; then
-    echo -e "${GREEN}[INFO] dropping database '$DB_NAME'...${NC}"
+    echo -e "${GREEN}[INFO] Dropping database '$DB_NAME'...${NC}"
     mysql -uroot -p"$ROOT_PASS" -e "DROP DATABASE IF EXISTS $DB_NAME;"
+    mysql -uroot -p"$ROOT_PASS" -e "DROP USER IF EXISTS 'zabbix'@'localhost';"
 else
     echo -e "${GREEN}[INFO] Skipping database deletion.${NC}"
 fi
 
 # Remove Zabbix packages
-echo -e "${GREEN}[INFO] removing Zabbix packages...${NC}"
+echo -e "${GREEN}[INFO] Removing Zabbix packages...${NC}"
 DEBIAN_FRONTEND=noninteractive apt purge -y \
-    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent \
-    zabbix-agent-mysql zabbix-sql-scripts
+    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent zabbix-sql-scripts
 
-# Remove configuration files and directories
-echo -e "${GREEN}[INFO] removing configuration files...${NC}"
+# Remove configuration directories and data
+echo -e "${GREEN}[INFO] Removing configuration files and data...${NC}"
 rm -rf /etc/zabbix
-rm -rf /usr/share/zabbix
-rm -rf /var/log/zabbix
 rm -rf /var/lib/zabbix
+rm -rf /var/log/zabbix
+rm -rf /usr/share/zabbix
 
 # Remove Zabbix repository package
-echo -e "${GREEN}[INFO] removing Zabbix repository package...${NC}"
-dpkg -r zabbix-release || true
+echo -e "${GREEN}[INFO] Removing Zabbix repository package...${NC}"
+dpkg -r --force-depends zabbix-release || true
 rm -f /tmp/zabbix-release.deb
 
-# Remove Apache Zabbix configuration
+# Remove Apache Zabbix configuration if exists
 if [ -f /etc/apache2/conf-available/zabbix.conf ]; then
+    echo -e "${GREEN}[INFO] Removing Apache Zabbix configuration...${NC}"
     a2disconf zabbix || true
     rm -f /etc/apache2/conf-available/zabbix.conf
 fi
 
-# Reload Apache
+# Reload Apache safely
+echo -e "${GREEN}[INFO] Reloading Apache...${NC}"
 systemctl reload apache2 || true
 
-# Cleanup packages
-echo -e "${GREEN}[INFO] cleaning up unused packages...${NC}"
+# Cleanup unused packages
+echo -e "${GREEN}[INFO] Cleaning up unused packages...${NC}"
 apt autoremove -y
 apt update -y
 
