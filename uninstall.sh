@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/basha
 # Zabbix full uninstall script for Debian 12 / Ubuntu 22.04
 # Deletes Zabbix server, agent, frontend, database, and configs
 
