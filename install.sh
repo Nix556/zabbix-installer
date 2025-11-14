@@ -1,80 +1,97 @@
 #!/bin/bash
-# Zabbix 7.4 installer using lib scripts
-# Debian 12 / Ubuntu 22.04
+# zabbix 7.4 installer for Debian 12 / Ubuntu 22.04
+# fully interactive, agent config compatible with directory-based setup
+# automatically enables apache zabbix frontend
 
+export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 set -euo pipefail
 IFS=$'\n\t'
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-source "$SCRIPT_DIR/lib/colors.sh"
-source "$SCRIPT_DIR/lib/utils.sh"
-source "$SCRIPT_DIR/lib/db.sh"
-source "$SCRIPT_DIR/lib/system.sh"
+RED="\033[0;31m"
+GREEN="\033[0;32m"
+YELLOW="\033[1;33m"
+NC="\033[0m"
 
-# Detect OS
-detect_os
-if [[ "$OS_NAME" == "Debian" && "$OS_VERSION" != "12" ]] && [[ "$OS_NAME" == "Ubuntu" && "$OS_VERSION" != "22.04" ]]; then
-    error "Only Debian 12 and Ubuntu 22.04 are supported."
+echo -e "${GREEN}[INFO] detecting OS...${NC}"
+OS=$(lsb_release -si)
+VER=$(lsb_release -sr)
+
+if [[ "$OS" == "Debian" && "$VER" == "12"* ]]; then
+    REPO_URL="https://repo.zabbix.com/zabbix/7.4/release/debian/pool/main/z/zabbix-release/zabbix-release_latest_7.4+debian12_all.deb"
+elif [[ "$OS" == "Ubuntu" && "$VER" == "22.04"* ]]; then
+    REPO_URL="https://repo.zabbix.com/zabbix/7.4/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_7.4+ubuntu22.04_all.deb"
+else
+    echo -e "${RED}[ERROR] only Debian 12 and Ubuntu 22.04 are supported.${NC}"
     exit 1
 fi
+echo -e "${GREEN}[OK] OS detected: $OS $VER${NC}"
 
-# Set Zabbix repo URL
-if [[ "$OS_NAME" == "Debian" ]]; then
-    REPO_URL="https://repo.zabbix.com/zabbix/7.4/release/debian/pool/main/z/zabbix-release/zabbix-release_latest_7.4+debian12_all.deb"
-else
-    REPO_URL="https://repo.zabbix.com/zabbix/7.4/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_7.4+ubuntu22.04_all.deb"
-fi
+# user input
+read -rp "enter Zabbix Server IP [127.0.0.1]: " ZABBIX_IP
+ZABBIX_IP=${ZABBIX_IP:-127.0.0.1}
 
-# User inputs
-ZABBIX_IP=$(ask "Enter Zabbix Server IP" "127.0.0.1")
-until validate_ip "$ZABBIX_IP"; do
-    warn "Invalid IP address. Try again."
-    ZABBIX_IP=$(ask "Enter Zabbix Server IP" "127.0.0.1")
-done
+read -rp "enter Zabbix DB name [zabbix]: " DB_NAME
+DB_NAME=${DB_NAME:-zabbix}
 
-DB_NAME=$(ask "Enter Zabbix DB name" "zabbix")
-DB_USER=$(ask "Enter Zabbix DB user" "zabbix")
+read -rp "enter Zabbix DB user [zabbix]: " DB_USER
+DB_USER=${DB_USER:-zabbix}
 
 while true; do
-    read -rsp "Enter Zabbix DB password: " DB_PASS
+    read -rsp "enter Zabbix DB password: " DB_PASS
     echo
     [[ -n "$DB_PASS" ]] && break
 done
 
 while true; do
-    read -rsp "Enter MariaDB root password: " ROOT_PASS
+    read -rsp "enter MariaDB root password: " ROOT_PASS
     echo
     [[ -n "$ROOT_PASS" ]] && break
 done
 
-ZABBIX_ADMIN_PASS=$(ask "Enter Zabbix Admin password (frontend)" "zabbix")
+read -rp "enter Zabbix Admin password (frontend) [zabbix]: " ZABBIX_ADMIN_PASS
+ZABBIX_ADMIN_PASS=${ZABBIX_ADMIN_PASS:-zabbix}
 
-info "Installing required packages..."
-update_system
+echo -e "${GREEN}[INFO] configuration summary:${NC}"
+echo "  DB: $DB_NAME / $DB_USER"
+echo "  Zabbix IP: $ZABBIX_IP"
+echo "  Frontend Admin password: $ZABBIX_ADMIN_PASS"
+
+# install prerequisites
+echo -e "${GREEN}[INFO] installing required packages...${NC}"
+apt update -y
 apt install -y wget curl gnupg2 lsb-release jq apt-transport-https \
 php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl \
 mariadb-server mariadb-client rsync socat ssl-cert fping snmpd apache2
 
-# Add Zabbix repo
-info "Adding Zabbix repository..."
+# add zabbix repo
+echo -e "${GREEN}[INFO] adding Zabbix repository...${NC}"
 wget -qO /tmp/zabbix-release.deb "$REPO_URL"
 dpkg -i /tmp/zabbix-release.deb
 apt update -y
 
-# Install Zabbix packages
-info "Installing Zabbix server, frontend, and agent..."
+# install zabbix server, frontend, agent
+echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
 DEBIAN_FRONTEND=noninteractive apt install -y \
     zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent
 
-# Configure database
-create_zabbix_db "$DB_NAME" "$DB_USER" "$DB_PASS" "$ROOT_PASS"
-info "Importing initial Zabbix schema..."
+# configure database
+echo -e "${GREEN}[INFO] configuring MariaDB...${NC}"
+mysql -uroot -p"$ROOT_PASS" <<EOF
+CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
+GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+echo -e "${GREEN}[INFO] importing initial Zabbix schema...${NC}"
 zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | mysql --default-character-set=utf8mb4 -u"$DB_USER" -p"$DB_PASS" "$DB_NAME"
 
-# Configure Zabbix server
+# configure zabbix server
+echo -e "${GREEN}[INFO] configuring Zabbix server...${NC}"
 sed -i "s|^# DBPassword=.*|DBPassword=$DB_PASS|" /etc/zabbix/zabbix_server.conf
 
-# Configure Zabbix agent directory-based config
+# configure zabbix agent using directory-based config
+echo -e "${GREEN}[INFO] configuring Zabbix agent...${NC}"
 mkdir -p /etc/zabbix/zabbix_agentd.d
 cat > /etc/zabbix/zabbix_agentd.d/agent.conf <<EOF
 Server=$ZABBIX_IP
@@ -84,11 +101,13 @@ EOF
 chown root:root /etc/zabbix/zabbix_agentd.d/agent.conf
 chmod 644 /etc/zabbix/zabbix_agentd.d/agent.conf
 
-# PHP timezone
+# configure php timezone
+echo -e "${GREEN}[INFO] setting PHP timezone...${NC}"
 PHP_INI=$(php --ini | grep "Loaded Configuration" | awk -F: '{print $2}' | xargs)
 [[ -f "$PHP_INI" ]] && sed -i "s|^;*date.timezone =.*|date.timezone = UTC|" "$PHP_INI"
 
-# Frontend configuration
+# create frontend config
+echo -e "${GREEN}[INFO] creating frontend configuration...${NC}"
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
 cat > "$FRONTEND_CONF" <<EOF
 <?php
@@ -106,16 +125,37 @@ EOF
 chown www-data:www-data "$FRONTEND_CONF"
 chmod 640 "$FRONTEND_CONF"
 
-# Enable Apache Zabbix frontend
-a2enconf zabbix || ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/zabbix.conf
+# enable apache zabbix config
+echo -e "${GREEN}[INFO] enabling apache Zabbix frontend...${NC}"
+if command -v a2enconf >/dev/null 2>&1; then
+    a2enconf zabbix
+else
+    ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/zabbix.conf
+fi
+
 systemctl reload apache2
 
-# Start services
-start_service zabbix-server
-start_service zabbix-agent
-start_service apache2
+# enable and start services
+echo -e "${GREEN}[INFO] starting and enabling services...${NC}"
+systemctl daemon-reload
+systemctl restart zabbix-server zabbix-agent apache2
+systemctl enable zabbix-server zabbix-agent apache2
 
-success "Zabbix installation complete!"
+# verify agent status
+echo -e "${GREEN}[INFO] checking Zabbix Agent status...${NC}"
+if systemctl is-active --quiet zabbix-agent; then
+    echo -e "${GREEN}[OK] Zabbix Agent is running.${NC}"
+else
+    echo -e "${RED}[ERROR] Zabbix Agent failed to start.${NC}"
+    echo "Check logs with: journalctl -xeu zabbix-agent"
+fi
+
+# cleanup temporary files and packages
+echo -e "${GREEN}[INFO] cleaning up temporary files...${NC}"
+rm -f /tmp/zabbix-release.deb
+apt autoremove -y
+
+echo -e "${GREEN}[OK] Zabbix installation complete!${NC}"
 echo "Access frontend at: http://$ZABBIX_IP/zabbix"
 echo "Username: Admin"
 echo "Password: $ZABBIX_ADMIN_PASS"
