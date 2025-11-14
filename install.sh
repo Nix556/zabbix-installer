@@ -11,18 +11,21 @@ GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 NC="\033[0m"
 
-# spinner function for long-running commands
-spinner() {
+# show a progress animation with dots while a command runs
+wait_spinner() {
     local pid=$!
-    local delay=0.1
-    local spinstr='|/-\'
+    local delay=0.5
+    local dots=""
+    printf "Installing... please wait"
     while kill -0 $pid 2>/dev/null; do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        spinstr=$temp${spinstr%"$temp"}
+        dots="${dots}."
+        if [[ ${#dots} -gt 3 ]]; then
+            dots=""
+        fi
+        printf "\rInstalling... please wait%-3s" "$dots"
         sleep $delay
-        printf "\b\b\b\b\b\b"
     done
+    printf "\r%-30s\r" ""  # clear line after command finishes
 }
 
 echo -e "${GREEN}[INFO] detecting OS...${NC}"
@@ -71,30 +74,30 @@ echo "  Frontend Admin password: $ZABBIX_ADMIN_PASS"
 
 # install prerequisites
 echo -e "${GREEN}[INFO] installing required packages...${NC}"
-apt update -y & spinner
+apt update -y & wait_spinner
 echo -e "${GREEN}[OK] package list updated${NC}"
 
 apt install -y wget curl gnupg2 lsb-release jq apt-transport-https \
 php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl \
-mariadb-server mariadb-client rsync socat ssl-cert fping snmpd apache2 & spinner
+mariadb-server mariadb-client rsync socat ssl-cert fping snmpd apache2 & wait_spinner
 echo -e "${GREEN}[OK] prerequisites installed${NC}"
 
 # add zabbix repo
 echo -e "${GREEN}[INFO] adding Zabbix repository...${NC}"
-wget -qO /tmp/zabbix-release.deb "$REPO_URL" & spinner
-dpkg -i /tmp/zabbix-release.deb & spinner
-apt update -y & spinner
+wget -qO /tmp/zabbix-release.deb "$REPO_URL" & wait_spinner
+dpkg -i /tmp/zabbix-release.deb & wait_spinner
+apt update -y & wait_spinner
 echo -e "${GREEN}[OK] Zabbix repository added${NC}"
 
 # install zabbix server, frontend, agent
 echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
 DEBIAN_FRONTEND=noninteractive apt install -y \
-    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent & spinner
+    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent & wait_spinner
 echo -e "${GREEN}[OK] Zabbix packages installed${NC}"
 
 # configure database
 echo -e "${GREEN}[INFO] configuring MariaDB...${NC}"
-mysql -uroot -p"$ROOT_PASS" <<EOF & spinner
+mysql -uroot -p"$ROOT_PASS" <<EOF & wait_spinner
 CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
 GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
@@ -103,7 +106,7 @@ EOF
 echo -e "${GREEN}[OK] MariaDB configured${NC}"
 
 echo -e "${GREEN}[INFO] importing initial Zabbix schema...${NC}"
-zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | mysql --default-character-set=utf8mb4 -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" & spinner
+zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | mysql --default-character-set=utf8mb4 -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" & wait_spinner
 echo -e "${GREEN}[OK] Zabbix schema imported${NC}"
 
 # configure zabbix server
@@ -152,7 +155,7 @@ echo -e "${GREEN}[OK] frontend configuration created${NC}"
 # enable apache zabbix config
 echo -e "${GREEN}[INFO] enabling apache Zabbix frontend...${NC}"
 if command -v a2enconf >/dev/null 2>&1; then
-    a2enconf zabbix & spinner
+    a2enconf zabbix & wait_spinner
 else
     ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/zabbix.conf
 fi
@@ -162,7 +165,7 @@ echo -e "${GREEN}[OK] apache Zabbix frontend enabled${NC}"
 # enable and start services
 echo -e "${GREEN}[INFO] starting and enabling services...${NC}"
 systemctl daemon-reload
-systemctl restart zabbix-server zabbix-agent apache2 & spinner
+systemctl restart zabbix-server zabbix-agent apache2 & wait_spinner
 systemctl enable zabbix-server zabbix-agent apache2
 echo -e "${GREEN}[OK] services started and enabled${NC}"
 
@@ -178,7 +181,7 @@ fi
 # cleanup temporary files and packages
 echo -e "${GREEN}[INFO] cleaning up temporary files...${NC}"
 rm -f /tmp/zabbix-release.deb
-apt autoremove -y & spinner
+apt autoremove -y & wait_spinner
 echo -e "${GREEN}[OK] cleanup complete${NC}"
 
 echo -e "${GREEN}[OK] Zabbix installation complete!${NC}"
