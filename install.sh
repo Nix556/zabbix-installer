@@ -15,6 +15,7 @@ echo -e "${GREEN}[INFO] Detecting OS...${NC}"
 OS=$(lsb_release -si)
 VER=$(lsb_release -sr)
 
+# Set correct Zabbix repo URL based on OS
 if [[ "$OS" == "Debian" && "$VER" == "12"* ]]; then
     REPO_URL="https://repo.zabbix.com/zabbix/7.4/debian/pool/main/z/zabbix-release/zabbix-release_7.4-1+debian12_all.deb"
 elif [[ "$OS" == "Ubuntu" && "$VER" == "22.04"* ]]; then
@@ -25,7 +26,7 @@ else
 fi
 echo -e "${GREEN}[OK] OS detected: $OS $VER${NC}"
 
-# User input
+# --- USER INPUT ---
 read -rp "Enter Zabbix Server IP [127.0.0.1]: " ZABBIX_IP
 ZABBIX_IP=${ZABBIX_IP:-127.0.0.1}
 
@@ -50,40 +51,29 @@ done
 read -rp "Enter Zabbix Admin password (frontend) [zabbix]: " ZABBIX_ADMIN_PASS
 ZABBIX_ADMIN_PASS=${ZABBIX_ADMIN_PASS:-zabbix}
 
-echo -e "${YELLOW}[INFO] Configuration summary:${NC}"
+echo -e "${GREEN}[INFO] Configuration summary:${NC}"
 echo "  DB: $DB_NAME / $DB_USER"
 echo "  Zabbix IP: $ZABBIX_IP"
 echo "  Frontend Admin password: $ZABBIX_ADMIN_PASS"
 
-# Install prerequisites
+# --- INSTALL PREREQUISITES ---
 echo -e "${GREEN}[INFO] Installing required packages...${NC}"
 apt update -y
 apt install -y wget curl gnupg2 lsb-release jq apt-transport-https \
 php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl \
 mariadb-server mariadb-client rsync socat ssl-cert fping snmpd
 
-# Add Zabbix repo
+# --- ADD ZABBIX REPO ---
 echo -e "${GREEN}[INFO] Adding Zabbix repository...${NC}"
 wget -qO /tmp/zabbix-release.deb "$REPO_URL"
 dpkg -i /tmp/zabbix-release.deb
 apt update -y
 
-# Install Zabbix server & frontend 
-echo -e "${GREEN}[INFO] Installing Zabbix server, frontend, and SQL scripts...${NC}"
-DEBIAN_FRONTEND=noninteractive apt install -y \
-    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts
-
-# Install Zabbix agent safely
-echo -e "${GREEN}[INFO] Installing Zabbix agent...${NC}"
-# Mask service to prevent auto-start (prevents failure if config missing)
-systemctl mask zabbix-agent.service
-DEBIAN_FRONTEND=noninteractive apt install -y zabbix-agent
-
-# Create Zabbix agent config if missing
+# --- PRE-CREATE ZABBIX AGENT CONFIG (required before installing agent) ---
 AGENT_CONF="/etc/zabbix/zabbix_agentd.conf"
+mkdir -p /etc/zabbix
 if [[ ! -f "$AGENT_CONF" ]]; then
-    echo -e "${YELLOW}[WARN] zabbix_agentd.conf not found. Creating default config...${NC}"
-    mkdir -p /etc/zabbix
+    echo -e "${YELLOW}[INFO] Creating default Zabbix Agent config...${NC}"
     cat > "$AGENT_CONF" <<EOF
 PidFile=/run/zabbix/zabbix_agentd.pid
 LogFile=/var/log/zabbix/zabbix_agentd.log
@@ -97,31 +87,37 @@ fi
 chown root:root "$AGENT_CONF"
 chmod 644 "$AGENT_CONF"
 
-# Configure database
+# --- INSTALL ZABBIX SERVER, FRONTEND, AGENT ---
+echo -e "${GREEN}[INFO] Installing Zabbix server, frontend, and agent...${NC}"
+DEBIAN_FRONTEND=noninteractive apt install -y \
+    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent
+
+# --- CONFIGURE DATABASE ---
 echo -e "${GREEN}[INFO] Configuring MariaDB...${NC}"
 mysql -uroot -p"$ROOT_PASS" <<EOF
 CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
 GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
 FLUSH PRIVILEGES;
+SET GLOBAL log_bin_trust_function_creators = 1;
 EOF
 
-# Import initial schema
 echo -e "${GREEN}[INFO] Importing initial Zabbix schema...${NC}"
 zcat /usr/share/doc/zabbix-server-mysql/create.sql.gz | mysql -u"$DB_USER" -p"$DB_PASS" "$DB_NAME"
 
-# Configure Zabbix server
+# Disable log_bin_trust_function_creators after import
+mysql -uroot -p"$ROOT_PASS" -e "SET GLOBAL log_bin_trust_function_creators = 0;"
+
+# --- CONFIGURE ZABBIX SERVER ---
 sed -i "s|^# DBPassword=.*|DBPassword=$DB_PASS|" /etc/zabbix/zabbix_server.conf
 
 # --- CONFIGURE PHP TIMEZONE ---
-echo -e "${GREEN}[INFO] Setting PHP timezone...${NC}"
 PHP_INI=$(php --ini | grep "Loaded Configuration" | awk -F: '{print $2}' | xargs)
 if [[ -f "$PHP_INI" ]]; then
     sed -i "s|^;*date.timezone =.*|date.timezone = UTC|" "$PHP_INI"
 fi
 
-# Frontend config
-echo -e "${GREEN}[INFO] Creating frontend config...${NC}"
+# --- CREATE FRONTEND CONFIG ---
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
 mkdir -p "$(dirname "$FRONTEND_CONF")"
 cat > "$FRONTEND_CONF" <<EOF
@@ -140,20 +136,20 @@ EOF
 chown www-data:www-data "$FRONTEND_CONF"
 chmod 640 "$FRONTEND_CONF"
 
-# Enable and start services
-echo -e "${GREEN}[INFO] Enabling and starting services...${NC}"
-# Unmask and start agent safely
-systemctl unmask zabbix-agent.service
-systemctl enable zabbix-agent zabbix-server apache2
-systemctl restart zabbix-server zabbix-agent apache2
+# --- ENABLE AND START SERVICES ---
+echo -e "${GREEN}[INFO] Starting and enabling services...${NC}"
+systemctl enable zabbix-server zabbix-agent apache2
+systemctl restart apache2
+systemctl restart zabbix-server
+systemctl restart zabbix-agent
 
-# Verify agent status
+# --- VERIFY AGENT STATUS ---
 echo -e "${GREEN}[INFO] Checking Zabbix Agent status...${NC}"
 if systemctl is-active --quiet zabbix-agent; then
     echo -e "${GREEN}[OK] Zabbix Agent running.${NC}"
 else
-    echo -e "${RED}[ERROR] Zabbix Agent failed to start.${NC}"
-    echo "Check logs with: journalctl -xeu zabbix-agent"
+    echo -e "${RED}[ERROR] Zabbix Agent failed to start. Check logs with:"
+    echo "  journalctl -xeu zabbix-agent"
 fi
 
 echo -e "${GREEN}[OK] Zabbix installation complete!${NC}"
