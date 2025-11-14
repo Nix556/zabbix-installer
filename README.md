@@ -18,35 +18,12 @@ Everything is automated repository setup, MariaDB configuration, Apache/PHP setu
 
 ---
 
-## Quick Start Example
-
-Install and configure Zabbix 7.4 interactively, then manage hosts via the API:
-
-```bash
-# Make scripts executable
-chmod +x install.sh uninstall.sh zabbix_api.sh
-chmod +x lib/*.sh
-
-# Run installer (interactive)
-sudo ./install.sh
-
-# Add a host via API (example)
-sudo ./zabbix_api.sh add-host   --host-name "web01"   --visible-name "Web Server 01"   --group-id 2   --interface '[{"type":1,"main":1,"useip":1,"ip":"192.168.1.10","dns":"","port":"10050"}]'   --template '[{"templateid":10001}]'
-```
-
----
-
 ## Project Structure
 
 ```
 zabbix-installer/
 ├─ install.sh             # Full interactive installer (Debian 12 / Ubuntu 22.04)
 ├─ uninstall.sh           # Clean uninstaller (removes all Zabbix components)
-├─ lib/
-│   ├─ colors.sh          # Common color variables
-│   ├─ utils.sh           # Helper functions
-│   ├─ system.sh          # Service controls
-│   └─ db.sh              # Database management helpers
 
 ```
 
@@ -100,40 +77,6 @@ At the end, it shows:
 Frontend URL: http://<ZABBIX_IP>/zabbix
 Admin user: Admin
 Admin password: <your-password>
-```
-
----
-
-## Zabbix API Script
-
-The `zabbix_api.sh` tool works both interactively and via CLI automation.
-
-### Example Commands
-
-List hosts:
-
-```bash
-sudo ./zabbix_api.sh list-hosts
-```
-
-Add a host with templates:
-
-```bash
-sudo ./zabbix_api.sh add-host   --host-name "web01"   --visible-name "Web Server 01"   --group-id 2   --interface '[{"type":1,"main":1,"useip":1,"ip":"192.168.1.10","dns":"","port":"10050"}]'   --template '[{"templateid":10001},{"templateid":10002}]'
-```
-
-| Argument | Description |
-|-----------|-------------|
-| `--host-name` | Required host name |
-| `--visible-name` | Optional, defaults to host name |
-| `--group-id` | Host group ID (default: `2` = Linux servers) |
-| `--interface` | JSON array of interfaces (IP + port) |
-| `--template` | JSON array of template IDs |
-
-Remove a host:
-
-```bash
-sudo ./zabbix_api.sh remove-host
 ```
 
 ---
