@@ -42,14 +42,12 @@ sudo ./zabbix_api.sh add-host   --host-name "web01"   --visible-name "Web Server
 zabbix-installer/
 ├─ install.sh             # Full interactive installer (Debian 12 / Ubuntu 22.04)
 ├─ uninstall.sh           # Clean uninstaller (removes all Zabbix components)
-├─ zabbix_api.sh          # Manage Zabbix hosts via API
 ├─ lib/
 │   ├─ colors.sh          # Common color variables
 │   ├─ utils.sh           # Helper functions
 │   ├─ system.sh          # Service controls
 │   └─ db.sh              # Database management helpers
-└─ config/
-    └─ zabbix_api.conf    # Generated automatically after installation
+
 ```
 
 ---
