@@ -66,7 +66,7 @@ DEBIAN_FRONTEND=noninteractive apt install -y \
 # Agent config fix
 AGENT_CONF="/etc/zabbix/zabbix_agentd.conf"
 if [[ ! -f "$AGENT_CONF" ]]; then
-    echo -e "${YELLOW}[WARN] Agent config missing, creating default...${NC}"
+    echo "[WARN] zabbix_agentd.conf not found. Creating default config..."
     mkdir -p /etc/zabbix
     cat > "$AGENT_CONF" <<EOF
 PidFile=/run/zabbix/zabbix_agentd.pid
@@ -78,6 +78,7 @@ Hostname=$(hostname)
 Include=/etc/zabbix/zabbix_agentd.d/*.conf
 EOF
 fi
+
 chown root:root "$AGENT_CONF"
 chmod 644 "$AGENT_CONF"
 
