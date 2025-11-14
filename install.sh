@@ -1,5 +1,6 @@
 #!/bin/bash
 # zabbix 7.4 installer for Debian 12 / Ubuntu 22.04
+# fully interactive, fixes agent config issue
 
 export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 set -euo pipefail
@@ -92,14 +93,29 @@ mysql -uroot -p"$ROOT_PASS" -e "SET GLOBAL log_bin_trust_function_creators = 0;"
 echo -e "${GREEN}[INFO] Configuring Zabbix server...${NC}"
 sed -i "s|^# DBPassword=.*|DBPassword=$DB_PASS|" /etc/zabbix/zabbix_server.conf
 
+# check if zabbix_agentd.conf exists; create if missing
+if [[ ! -f /etc/zabbix/zabbix_agentd.conf ]]; then
+    echo -e "${GREEN}[INFO] Creating minimal zabbix_agentd.conf...${NC}"
+    cat > /etc/zabbix/zabbix_agentd.conf <<EOF
+PidFile=/run/zabbix/zabbix_agentd.pid
+LogFile=/var/log/zabbix/zabbix_agentd.log
+Include=/etc/zabbix/zabbix_agentd.d/*.conf
+EOF
+    chown root:root /etc/zabbix/zabbix_agentd.conf
+    chmod 644 /etc/zabbix/zabbix_agentd.conf
+fi
+
 # configure zabbix agent
 echo -e "${GREEN}[INFO] Configuring Zabbix agent...${NC}"
-AGENT_CONF="/etc/zabbix/zabbix_agentd.conf"
-cp /usr/share/doc/zabbix-agent/examples/zabbix_agentd.conf "$AGENT_CONF"
-sed -i "s/^Server=127.0.0.1/Server=$ZABBIX_IP/" "$AGENT_CONF"
-sed -i "s/^ServerActive=127.0.0.1/ServerActive=$ZABBIX_IP/" "$AGENT_CONF"
-chown root:root "$AGENT_CONF"
-chmod 644 "$AGENT_CONF"
+AGENT_CONF_FILE="/etc/zabbix/zabbix_agentd.d/agent.conf"
+mkdir -p /etc/zabbix/zabbix_agentd.d
+cat > "$AGENT_CONF_FILE" <<EOF
+Server=$ZABBIX_IP
+ServerActive=$ZABBIX_IP
+Hostname=$(hostname)
+EOF
+chown root:root "$AGENT_CONF_FILE"
+chmod 644 "$AGENT_CONF_FILE"
 
 # configure php timezone
 echo -e "${GREEN}[INFO] Setting PHP timezone...${NC}"
@@ -127,6 +143,7 @@ chmod 640 "$FRONTEND_CONF"
 
 # enable and start services
 echo -e "${GREEN}[INFO] Starting and enabling services...${NC}"
+systemctl daemon-reload
 systemctl restart zabbix-server zabbix-agent apache2
 systemctl enable zabbix-server zabbix-agent apache2
 
