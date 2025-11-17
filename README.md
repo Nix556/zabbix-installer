@@ -107,7 +107,6 @@ The script automatically detects credentials from `/etc/zabbix/zabbix_server.con
 - Zabbix version: 7.4 (latest)  
 - PHP timezone: Auto-detected and configured  
 - Schema: Imported automatically  
-- API config: Stored in `config/zabbix_api.conf`  
 - Privileges: Requires root or sudo  
 - Status: Tested in development environments only  
 
