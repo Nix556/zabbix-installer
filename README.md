@@ -1,4 +1,4 @@
-# Zabbix Installer (v7.4)
+# Zabbix Installer 7.4
 
 [![Development Status](https://img.shields.io/badge/status-in_development-yellow)](https://github.com/Nix556/Zabbix-Installer)
 [![Platform](https://img.shields.io/badge/platform-Debian_12_|_Ubuntu_22.04-blue)]()
