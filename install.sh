@@ -7,17 +7,18 @@ export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 set -euo pipefail
 IFS=$'\n\t'
 
+# move colors before first usage
+RED="\033[0;31m"
+GREEN="\033[0;32m"
+YELLOW="\033[1;33m"
+NC="\033[0m"
+
 # require root and non-interactive apt
 if [[ $EUID -ne 0 ]]; then
     echo -e "${RED}[ERROR] please run as root (sudo).${NC}"
     exit 1
 fi
 export DEBIAN_FRONTEND=noninteractive
-
-RED="\033[0;31m"
-GREEN="\033[0;32m"
-YELLOW="\033[1;33m"
-NC="\033[0m"
 
 echo -e "${GREEN}[INFO] detecting OS...${NC}"
 # Use /etc/os-release to avoid relying on lsb_release
@@ -73,16 +74,17 @@ mkdir -p /etc/mysql
 # install prerequisites
 echo -e "${GREEN}[INFO] installing required packages...${NC}"
 apt update -y
+# avoid php meta (pulls mod_php); install without recommends
 PKGS=(wget curl gnupg2 jq apt-transport-https
-      php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl php-fpm
+      php-cli php-fpm php-mysql php-xml php-bcmath php-mbstring php-ldap php-gd php-zip php-curl
       mariadb-server mariadb-client rsync socat ssl-cert fping snmpd apache2)
 set +e
-apt install -y "${PKGS[@]}"
+apt -o APT::Install-Recommends=false install -y "${PKGS[@]}"
 APT_STATUS=$?
 if (( APT_STATUS != 0 )); then
     echo -e "${YELLOW}[WARN] initial package install failed (code $APT_STATUS). Retrying with fix-broken...${NC}"
     apt --fix-broken install -y
-    apt install -y "${PKGS[@]}"
+    apt -o APT::Install-Recommends=false install -y "${PKGS[@]}"
     (( $? == 0 )) || { echo -e "${RED}[ERROR] package installation failed after retry.${NC}"; exit 1; }
 fi
 set -e
@@ -93,18 +95,24 @@ wget -qO /tmp/zabbix-release.deb "$REPO_URL"
 dpkg -i /tmp/zabbix-release.deb
 apt update -y
 
+# Enable required Apache modules and PHP-FPM integration (ensure no mod_php/mpm_prefork)
+PHP_VER="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+if command -v a2dismod >/dev/null 2>&1; then
+    a2dismod -f php8.* mpm_prefork || true
+fi
+if dpkg -l | grep -q '^ii\s\+libapache2-mod-php'; then
+    apt purge -y 'libapache2-mod-php*' || true
+fi
+if command -v a2enmod >/dev/null 2>&1; then
+    a2enmod mpm_event proxy proxy_fcgi setenvif || true
+    a2enconf "php${PHP_VER}-fpm" || true
+fi
+systemctl enable --now "php${PHP_VER}-fpm" || true
+
 # install zabbix server, frontend, agent
 echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
 DEBIAN_FRONTEND=noninteractive apt install -y \
     zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent
-
-# Enable required Apache modules and PHP-FPM integration
-PHP_VER="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
-if command -v a2enmod >/dev/null 2>&1; then
-    a2enmod proxy proxy_fcgi setenvif || true
-    a2enconf "php${PHP_VER}-fpm" || true
-fi
-systemctl enable --now "php${PHP_VER}-fpm" || true
 
 # configure database
 echo -e "${GREEN}[INFO] configuring MariaDB...${NC}"
@@ -180,7 +188,7 @@ else
 fi
 
 echo -e "${GREEN}[INFO] starting Apache...${NC}"
-systemctl enable --now apache2
+systemctl enable --now apache2 || true
 
 # reload only if running
 if systemctl is-active --quiet apache2; then
