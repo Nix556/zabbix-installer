@@ -107,7 +107,41 @@ if command -v a2enmod >/dev/null 2>&1; then
     a2enmod mpm_event proxy proxy_fcgi setenvif || true
     a2enconf "php${PHP_VER}-fpm" || true
 fi
-systemctl enable --now "php${PHP_VER}-fpm" || true
+# only enable unit for now; we'll start after config is ensured
+systemctl enable "php${PHP_VER}-fpm" || true
+
+# Repair missing PHP-FPM configs if they were purged previously
+if [[ ! -f "/etc/php/${PHP_VER}/fpm/php-fpm.conf" ]]; then
+    echo -e "${YELLOW}[WARN] PHP-FPM config missing; restoring defaults...${NC}"
+    mkdir -p "/etc/php/${PHP_VER}/fpm/pool.d"
+    apt -y -o Dpkg::Options::="--force-confmiss" --reinstall install "php${PHP_VER}-fpm" "php${PHP_VER}-common" || true
+    # if still missing, write minimal safe defaults
+    if [[ ! -f "/etc/php/${PHP_VER}/fpm/php-fpm.conf" ]]; then
+        cat >"/etc/php/${PHP_VER}/fpm/php-fpm.conf" <<EOF
+[global]
+pid = /run/php/php${PHP_VER}-fpm.pid
+error_log = /var/log/php${PHP_VER}-fpm.log
+include=/etc/php/${PHP_VER}/fpm/pool.d/*.conf
+EOF
+    fi
+    if [[ ! -f "/etc/php/${PHP_VER}/fpm/pool.d/www.conf" ]]; then
+        cat >"/etc/php/${PHP_VER}/fpm/pool.d/www.conf" <<EOF
+[www]
+user = www-data
+group = www-data
+listen = /run/php/php${PHP_VER}-fpm.sock
+listen.owner = www-data
+listen.group = www-data
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+EOF
+    fi
+fi
+# start FPM now that config exists
+systemctl restart "php${PHP_VER}-fpm" || true
 
 # install zabbix server, frontend, agent
 echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
