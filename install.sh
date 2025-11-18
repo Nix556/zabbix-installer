@@ -217,6 +217,22 @@ for SAPI in fpm cli; do
     PHP_INI="/etc/php/${PHP_VER}/${SAPI}/php.ini"
     [[ -f "$PHP_INI" ]] && sed -i "s|^;*date.timezone =.*|date.timezone = UTC|" "$PHP_INI"
 done
+
+# Ensure required PHP MySQL extensions are enabled (mysqli, pdo_mysql)
+echo -e "${GREEN}[INFO] ensuring PHP MySQL extensions (mysqli, pdo_mysql) are enabled...${NC}"
+ensure_php_exts() {
+    local exts=(mysqli pdo_mysql)
+    for ext in "${exts[@]}"; do
+        local mod_ini="/etc/php/${PHP_VER}/mods-available/${ext}.ini"
+        [[ -f "$mod_ini" ]] || echo "extension=${ext}" > "$mod_ini"
+        for sapi in fpm cli apache2; do
+            local d="/etc/php/${PHP_VER}/${sapi}/conf.d"
+            [[ -d "$d" ]] || continue
+            ln -sf "$mod_ini" "$d/20-${ext}.ini"
+        done
+    done
+}
+ensure_php_exts
 systemctl restart "php${PHP_VER}-fpm" || true
 
 # create frontend config
@@ -230,21 +246,6 @@ cat > "$FRONTEND_CONF" <<EOF
 \$DB['DATABASE'] = '$DB_NAME';
 \$DB['USER']     = '$DB_USER';
 \$DB['PASSWORD'] = '$DB_PASS';
-\$ZBX_SERVER     = '$ZABBIX_IP';
-\$ZBX_SERVER_PORT= '10051';
-\$ZBX_SERVER_NAME= 'Zabbix Server';
-\$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
-EOF
-chown www-data:www-data "$FRONTEND_CONF"
-chmod 640 "$FRONTEND_CONF"
-
-# enable apache zabbix config and start Apache immediately
-echo -e "${GREEN}[INFO] enabling Apache Zabbix frontend...${NC}"
-if command -v a2enconf >/dev/null 2>&1; then
-    a2enconf zabbix
-else
-    ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/zabbix.conf
-fi
 
 echo -e "${GREEN}[INFO] starting Apache...${NC}"
 systemctl enable --now apache2 || true
