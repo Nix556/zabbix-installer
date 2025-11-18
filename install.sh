@@ -199,6 +199,12 @@ echo -e "${GREEN}[INFO] configuring Zabbix server...${NC}"
 sed -i "s|^#\? DBName=.*|DBName=$DB_NAME|" /etc/zabbix/zabbix_server.conf
 sed -i "s|^#\? DBUser=.*|DBUser=$DB_USER|" /etc/zabbix/zabbix_server.conf
 sed -i "s|^#\? DBPassword=.*|DBPassword=$DB_PASS|" /etc/zabbix/zabbix_server.conf
+# ensure DBType is lowercase mysql for modern Zabbix
+if grep -Eq '^[[:space:]]*#?[[:space:]]*DBType' /etc/zabbix/zabbix_server.conf; then
+    sed -i -E "s|^[[:space:]]*#?[[:space:]]*DBType=.*|DBType=mysql|" /etc/zabbix/zabbix_server.conf
+else
+    echo "DBType=mysql" >> /etc/zabbix/zabbix_server.conf
+fi
 
 # configure zabbix agent using directory-based config
 echo -e "${GREEN}[INFO] configuring Zabbix agent...${NC}"
@@ -261,9 +267,12 @@ systemctl restart "php${PHP_VER}-fpm" || true
 # create frontend config
 echo -e "${GREEN}[INFO] creating frontend configuration...${NC}"
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
+# Prefer MYSQL (expects mysqli extension). Fallback to MYSQLi if mysqli is unavailable.
+FRONTEND_DB_TYPE="MYSQL"
+php -m 2>/dev/null | grep -qi '^mysqli$' || FRONTEND_DB_TYPE="MYSQLi"
 cat > "$FRONTEND_CONF" <<EOF
 <?php
-\$DB['TYPE']     = 'MYSQL';
+\$DB['TYPE']     = '${FRONTEND_DB_TYPE}';
 \$DB['SERVER']   = 'localhost';
 \$DB['PORT']     = '0';
 \$DB['DATABASE'] = '$DB_NAME';
@@ -271,6 +280,12 @@ cat > "$FRONTEND_CONF" <<EOF
 \$DB['PASSWORD'] = '$DB_PASS';
 ?>
 EOF
+
+# start and enable Zabbix services
+echo -e "${GREEN}[INFO] starting and enabling Zabbix services...${NC}"
+systemctl daemon-reload
+systemctl restart zabbix-server zabbix-agent
+systemctl enable zabbix-server zabbix-agent
 
 # Optionally set Frontend Admin password via API (best-effort)
 if [[ -n "${ZABBIX_ADMIN_PASS:-}" ]]; then
