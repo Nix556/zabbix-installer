@@ -224,12 +224,12 @@ echo -e "${GREEN}[INFO] creating frontend configuration...${NC}"
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
 cat > "$FRONTEND_CONF" <<EOF
 <?php
-$DB['TYPE']     = 'MYSQL';
-$DB['SERVER']   = 'localhost';
-$DB['PORT']     = '0';
-$DB['DATABASE'] = '$DB_NAME';
-$DB['USER']     = '$DB_USER';
-$DB['PASSWORD'] = '$DB_PASS';
+\$DB['TYPE']     = 'MYSQL';
+\$DB['SERVER']   = 'localhost';
+\$DB['PORT']     = '0';
+\$DB['DATABASE'] = '$DB_NAME';
+\$DB['USER']     = '$DB_USER';
+\$DB['PASSWORD'] = '$DB_PASS';
 $ZBX_SERVER     = '$ZABBIX_IP';
 $ZBX_SERVER_PORT= '10051';
 $ZBX_SERVER_NAME= 'Zabbix Server';
