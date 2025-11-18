@@ -32,28 +32,31 @@ stop_if() { systemctl stop "$1" 2>/dev/null || true; systemctl disable "$1" 2>/d
 for svc in zabbix-server zabbix-agent apache2 php*-fpm mariadb mysql; do stop_if "$svc"; done
 
 echo -e "${GREEN}[INFO] Dropping database and user (if exist)...${NC}"
-MYSQL_ROOT_ARGS=(-uroot)
-[[ -n "${ROOT_PASS}" ]] && MYSQL_ROOT_ARGS+=(-p"${ROOT_PASS}")
-# Test connectivity (ignore failure if socket auth without password)
-mysql "${MYSQL_ROOT_ARGS[@]}" -e "SELECT 1" >/dev/null 2>&1 || echo -e "${YELLOW}[WARN] Could not verify MariaDB root access; DB/User removal may fail.${NC}"
-
-mysql "${MYSQL_ROOT_ARGS[@]}" <<EOF || true
+if command -v mysql >/dev/null 2>&1; then
+    MYSQL_ROOT_ARGS=(-uroot)
+    [[ -n "${ROOT_PASS}" ]] && MYSQL_ROOT_ARGS+=(-p"${ROOT_PASS}")
+    mysql "${MYSQL_ROOT_ARGS[@]}" -e "SELECT 1" >/dev/null 2>&1 || echo -e "${YELLOW}[WARN] Could not verify MariaDB root access; DB/User removal may fail.${NC}"
+    mysql "${MYSQL_ROOT_ARGS[@]}" <<EOF || true
 DROP DATABASE IF EXISTS \`$DB_NAME\`;
 DROP USER IF EXISTS '$DB_USER'@'localhost';
 FLUSH PRIVILEGES;
 EOF
+else
+    echo -e "${YELLOW}[WARN] mysql client not found; skipping database/user removal.${NC}"
+fi
 
 echo -e "${GREEN}[INFO] Purging Zabbix packages...${NC}"
 ZBX_PKGS=(zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent)
-apt purge -y "${ZBX_PKGS[@]}" 2>/dev/null || true
-
+INSTALLED_ZBX=($(dpkg -l | awk '/^ii/ {print $2}' | grep -x -F -f <(printf "%s\n" "${ZBX_PKGS[@]}") || true))
+[[ ${#INSTALLED_ZBX[@]} -gt 0 ]] && apt purge -y "${INSTALLED_ZBX[@]}" 2>/dev/null || echo -e "${YELLOW}[INFO] No Zabbix packages installed to purge.${NC}"
 if [[ "$PURGE_ALL" =~ ^[Yy]$ ]]; then
     echo -e "${GREEN}[INFO] Purging auxiliary stack (Apache, MariaDB, PHP, tools)...${NC}"
     AUX_PKGS=(apache2 mariadb-server mariadb-client
               php php-fpm php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl
               libapache2-mod-php libapache2-mod-php8.2
               wget curl gnupg2 jq apt-transport-https rsync socat ssl-cert fping snmpd)
-    apt purge -y "${AUX_PKGS[@]}" 2>/dev/null || true
+    INSTALLED_AUX=($(dpkg -l | awk '/^ii/ {print $2}' | grep -x -F -f <(printf "%s\n" "${AUX_PKGS[@]}") || true))
+    [[ ${#INSTALLED_AUX[@]} -gt 0 ]] && apt purge -y "${INSTALLED_AUX[@]}" 2>/dev/null || echo -e "${YELLOW}[INFO] No auxiliary packages installed to purge.${NC}"
 fi
 
 echo -e "${GREEN}[INFO] Removing residual files...${NC}"
@@ -76,7 +79,7 @@ apt autoremove -y
 apt autoclean -y
 
 echo -e "${GREEN}[INFO] Done.${NC}"
-echo "Removed packages: ${ZBX_PKGS[*]}"
-[[ "$PURGE_ALL" =~ ^[Yy]$ ]] && echo "Also purged auxiliary packages (Apache, MariaDB, PHP, tools)."
+echo "Removed packages: ${INSTALLED_ZBX[*]:-none}"
+[[ "$PURGE_ALL" =~ ^[Yy]$ ]] && echo "Also purged auxiliary packages: ${INSTALLED_AUX[*]:-none}"
 echo "Database/user dropped: $DB_NAME / $DB_USER"
 echo -e "${YELLOW}If you installed extra dependencies manually, review and remove them as needed.${NC}"
