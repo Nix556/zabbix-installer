@@ -49,7 +49,10 @@ apt purge -y "${ZBX_PKGS[@]}" 2>/dev/null || true
 
 if [[ "$PURGE_ALL" =~ ^[Yy]$ ]]; then
     echo -e "${GREEN}[INFO] Purging auxiliary stack (Apache, MariaDB, PHP, tools)...${NC}"
-    AUX_PKGS=(apache2 mariadb-server mariadb-client php php-fpm php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl wget curl gnupg2 jq apt-transport-https rsync socat ssl-cert fping snmpd)
+    AUX_PKGS=(apache2 mariadb-server mariadb-client
+              php php-fpm php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl
+              libapache2-mod-php libapache2-mod-php8.2
+              wget curl gnupg2 jq apt-transport-https rsync socat ssl-cert fping snmpd)
     apt purge -y "${AUX_PKGS[@]}" 2>/dev/null || true
 fi
 
