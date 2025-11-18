@@ -233,6 +233,29 @@ ensure_php_exts() {
     done
 }
 ensure_php_exts
+# Create a minimal php.ini for FPM/CLI if dpkg refused to restore it (ensures MySQL drivers are loaded)
+ensure_php_ini_baseline() {
+	for SAPI in fpm cli; do
+		local INI="/etc/php/${PHP_VER}/${SAPI}/php.ini"
+		mkdir -p "/etc/php/${PHP_VER}/${SAPI}"
+		if [[ ! -f "$INI" ]]; then
+			cat >"$INI" <<EOF
+[PHP]
+date.timezone = UTC
+; ensure MySQL drivers are available for Zabbix frontend
+extension=mysqli
+extension=pdo_mysql
+; common sane defaults
+expose_php = Off
+memory_limit = 256M
+post_max_size = 16M
+upload_max_filesize = 16M
+max_execution_time = 300
+EOF
+		fi
+	done
+}
+ensure_php_ini_baseline
 systemctl restart "php${PHP_VER}-fpm" || true
 
 # create frontend config
@@ -249,29 +272,6 @@ cat > "$FRONTEND_CONF" <<EOF
 ?>
 EOF
 
-echo -e "${GREEN}[INFO] starting Apache...${NC}"
-systemctl enable --now apache2 || true
-
-# reload only if running
-if systemctl is-active --quiet apache2; then
-    echo -e "${GREEN}[INFO] reloading Apache...${NC}"
-    systemctl reload apache2
-else
-    echo -e "${RED}[ERROR] Apache failed to start; skipping reload.${NC}"
-fi
-
-# start and enable Zabbix services
-echo -e "${GREEN}[INFO] starting and enabling Zabbix services...${NC}"
-systemctl daemon-reload
-systemctl restart zabbix-server zabbix-agent
-systemctl enable zabbix-server zabbix-agent
-
-# Optionally set Frontend Admin password via API (best-effort)
-if [[ -n "${ZABBIX_ADMIN_PASS:-}" ]]; then
-    echo -e "${GREEN}[INFO] setting Zabbix Frontend Admin password...${NC}"
-    TOKEN=""
-    for i in {1..30}; do
-        TOKEN="$(curl -s -X POST -H 'Content-Type: application/json' \
             -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
             "http://127.0.0.1/zabbix/api_jsonrpc.php" | jq -r '.result // empty' || true)"
         [[ -n "$TOKEN" ]] && break
