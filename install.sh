@@ -66,12 +66,26 @@ echo "  DB: $DB_NAME / $DB_USER"
 echo "  Zabbix IP: $ZABBIX_IP"
 echo "  Frontend Admin password: $ZABBIX_ADMIN_PASS"
 
+# pre-create mysql dir/file to avoid mariadb-common alt path error
+mkdir -p /etc/mysql
+[[ -f /etc/mysql/mariadb.cnf ]] || echo "# placeholder created by install.sh" > /etc/mysql/mariadb.cnf
+
 # install prerequisites
 echo -e "${GREEN}[INFO] installing required packages...${NC}"
 apt update -y
-apt install -y wget curl gnupg2 jq apt-transport-https \
-php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl php-fpm \
-mariadb-server mariadb-client rsync socat ssl-cert fping snmpd apache2
+PKGS=(wget curl gnupg2 jq apt-transport-https
+      php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl php-fpm
+      mariadb-server mariadb-client rsync socat ssl-cert fping snmpd apache2)
+set +e
+apt install -y "${PKGS[@]}"
+APT_STATUS=$?
+if (( APT_STATUS != 0 )); then
+    echo -e "${YELLOW}[WARN] initial package install failed (code $APT_STATUS). Retrying with fix-broken...${NC}"
+    apt --fix-broken install -y
+    apt install -y "${PKGS[@]}"
+    (( $? == 0 )) || { echo -e "${RED}[ERROR] package installation failed after retry.${NC}"; exit 1; }
+fi
+set -e
 
 # add zabbix repo
 echo -e "${GREEN}[INFO] adding Zabbix repository...${NC}"
