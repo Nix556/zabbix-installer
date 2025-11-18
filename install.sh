@@ -272,6 +272,12 @@ cat > "$FRONTEND_CONF" <<EOF
 ?>
 EOF
 
+# Optionally set Frontend Admin password via API (best-effort)
+if [[ -n "${ZABBIX_ADMIN_PASS:-}" ]]; then
+    echo -e "${GREEN}[INFO] setting Zabbix Frontend Admin password...${NC}"
+    TOKEN=""
+    for i in {1..30}; do
+        TOKEN="$(curl -s -X POST -H 'Content-Type: application/json' \
             -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
             "http://127.0.0.1/zabbix/api_jsonrpc.php" | jq -r '.result // empty' || true)"
         [[ -n "$TOKEN" ]] && break
