@@ -12,7 +12,6 @@
 ## Overview
 
 This repository provides **interactive Bash scripts** to install, configure, and uninstall **Zabbix 7.4** (Server + Frontend + Agent) on **Debian 12** or **Ubuntu 22.04**.  
-It also includes a `zabbix_api.sh` script for managing hosts through the **Zabbix API**.
 
 Everything is automated repository setup, MariaDB configuration, Apache/PHP setup, and frontend generation.
 
