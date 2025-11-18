@@ -1,111 +1,126 @@
 #!/bin/bash
-# Zabbix 7.4 installer for Debian 12 / Ubuntu 22.04
-# Fully automated, includes MariaDB setup and frontend config
+# zabbix 7.4 installer for Debian 12 / Ubuntu 22.04
+# fully interactive, agent config compatible with directory-based setup
+# automatically enables apache zabbix frontend
 
+export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 set -euo pipefail
 IFS=$'\n\t'
 
-export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
+# require root and non-interactive apt
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${RED}[ERROR] please run as root (sudo).${NC}"
+    exit 1
+fi
+export DEBIAN_FRONTEND=noninteractive
 
 RED="\033[0;31m"
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 NC="\033[0m"
 
-echo -e "${GREEN}[INFO] Detecting OS...${NC}"
-OS=$(lsb_release -si)
-VER=$(lsb_release -sr)
+echo -e "${GREEN}[INFO] detecting OS...${NC}"
+# Use /etc/os-release to avoid relying on lsb_release
+. /etc/os-release
+OS="$ID"
+VER="$VERSION_ID"
 
-if [[ "$OS" == "Debian" && "$VER" == 12* ]]; then
+if [[ "$OS" == "debian" && "$VER" == "12" ]]; then
     REPO_URL="https://repo.zabbix.com/zabbix/7.4/release/debian/pool/main/z/zabbix-release/zabbix-release_latest_7.4+debian12_all.deb"
-elif [[ "$OS" == "Ubuntu" && "$VER" == 22.04* ]]; then
+elif [[ "$OS" == "ubuntu" && "$VER" == "22.04" ]]; then
     REPO_URL="https://repo.zabbix.com/zabbix/7.4/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_7.4+ubuntu22.04_all.deb"
 else
-    echo -e "${RED}[ERROR] Only Debian 12 or Ubuntu 22.04 are supported.${NC}"
+    echo -e "${RED}[ERROR] only Debian 12 and Ubuntu 22.04 are supported.${NC}"
     exit 1
 fi
-echo -e "${GREEN}[OK] OS detected: $OS $VER${NC}"
+echo -e "${GREEN}[OK] OS detected: ${PRETTY_NAME}${NC}"
 
-# --- User input ---
-read -rp "Enter Zabbix Server IP [127.0.0.1]: " ZABBIX_IP
+# user input
+read -rp "enter Zabbix Server IP [127.0.0.1]: " ZABBIX_IP
 ZABBIX_IP=${ZABBIX_IP:-127.0.0.1}
 
-read -rp "Enter Zabbix DB name [zabbix]: " DB_NAME
+read -rp "enter Zabbix DB name [zabbix]: " DB_NAME
 DB_NAME=${DB_NAME:-zabbix}
 
-read -rp "Enter Zabbix DB user [zabbix]: " DB_USER
+read -rp "enter Zabbix DB user [zabbix]: " DB_USER
 DB_USER=${DB_USER:-zabbix}
 
 while true; do
-    read -rsp "Enter Zabbix DB password: " DB_PASS
+    read -rsp "enter Zabbix DB password: " DB_PASS
     echo
     [[ -n "$DB_PASS" ]] && break
 done
 
+# Make MariaDB root password optional (socket auth on Debian/Ubuntu defaults)
 while true; do
-    read -rsp "Enter MariaDB root password: " ROOT_PASS
+    read -rsp "enter MariaDB root password (leave empty if using socket auth): " ROOT_PASS
     echo
-    [[ -n "$ROOT_PASS" ]] && break
+    break
 done
 
-read -rp "Enter Zabbix Admin password (frontend) [zabbix]: " ZABBIX_ADMIN_PASS
+read -rp "enter Zabbix Admin password (frontend) [zabbix]: " ZABBIX_ADMIN_PASS
 ZABBIX_ADMIN_PASS=${ZABBIX_ADMIN_PASS:-zabbix}
 
-echo -e "${GREEN}[INFO] Configuration summary:${NC}"
+echo -e "${GREEN}[INFO] configuration summary:${NC}"
 echo "  DB: $DB_NAME / $DB_USER"
 echo "  Zabbix IP: $ZABBIX_IP"
 echo "  Frontend Admin password: $ZABBIX_ADMIN_PASS"
 
-# --- Install prerequisites ---
-echo -e "${GREEN}[INFO] Installing required packages...${NC}"
+# install prerequisites
+echo -e "${GREEN}[INFO] installing required packages...${NC}"
 apt update -y
-apt install -y wget curl gnupg2 lsb-release jq apt-transport-https \
-php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl \
+apt install -y wget curl gnupg2 jq apt-transport-https \
+php php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl php-fpm \
 mariadb-server mariadb-client rsync socat ssl-cert fping snmpd apache2
 
-# --- Add Zabbix repo ---
-echo -e "${GREEN}[INFO] Adding Zabbix repository...${NC}"
+# add zabbix repo
+echo -e "${GREEN}[INFO] adding Zabbix repository...${NC}"
 wget -qO /tmp/zabbix-release.deb "$REPO_URL"
 dpkg -i /tmp/zabbix-release.deb
 apt update -y
 
-# --- Install Zabbix packages including SQL scripts ---
-echo -e "${GREEN}[INFO] Installing Zabbix packages...${NC}"
+# install zabbix server, frontend, agent
+echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
 DEBIAN_FRONTEND=noninteractive apt install -y \
-    zabbix-server-mysql \
-    zabbix-frontend-php \
-    zabbix-apache-conf \
-    zabbix-agent \
-    zabbix-sql-scripts
+    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent
 
-# --- Configure MariaDB ---
-echo -e "${GREEN}[INFO] Configuring MariaDB...${NC}"
-mysql -uroot -p"$ROOT_PASS" <<EOF
+# Enable required Apache modules and PHP-FPM integration
+PHP_VER="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+if command -v a2enmod >/dev/null 2>&1; then
+    a2enmod proxy proxy_fcgi setenvif || true
+    a2enconf "php${PHP_VER}-fpm" || true
+fi
+systemctl enable --now "php${PHP_VER}-fpm" || true
+
+# configure database
+echo -e "${GREEN}[INFO] configuring MariaDB...${NC}"
+MYSQL_ROOT_ARGS=(-uroot)
+[[ -n "${ROOT_PASS:-}" ]] && MYSQL_ROOT_ARGS+=(-p"$ROOT_PASS")
+
+mysql "${MYSQL_ROOT_ARGS[@]}" <<EOF
 CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
 GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
 FLUSH PRIVILEGES;
-SET GLOBAL log_bin_trust_function_creators = 1;
 EOF
 
-# --- Import Zabbix schema ---
-SQL_PATH="/usr/share/zabbix/sql-scripts/mysql/server.sql.gz"
-if [[ ! -f "$SQL_PATH" ]]; then
-    echo -e "${RED}[ERROR] Zabbix SQL schema file not found: $SQL_PATH${NC}"
-    exit 1
+# Import schema only if not present
+echo -e "${GREEN}[INFO] importing initial Zabbix schema (if needed)...${NC}"
+if ! mysql "${MYSQL_ROOT_ARGS[@]}" -Nse "SELECT 1 FROM information_schema.tables WHERE table_schema='$DB_NAME' AND table_name='users' LIMIT 1;" | grep -q 1; then
+    zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | mysql --default-character-set=utf8mb4 -u"$DB_USER" -p"$DB_PASS" "$DB_NAME"
+else
+    echo -e "${YELLOW}[SKIP] schema already exists in $DB_NAME.${NC}"
 fi
-echo -e "${GREEN}[INFO] Importing initial Zabbix schema...${NC}"
-zcat "$SQL_PATH" | mysql --default-character-set=utf8mb4 -u"$DB_USER" -p"$DB_PASS" "$DB_NAME"
 
-# Disable log_bin_trust_function_creators after import
-mysql -uroot -p"$ROOT_PASS" -e "SET GLOBAL log_bin_trust_function_creators = 0;"
+# configure zabbix server
+echo -e "${GREEN}[INFO] configuring Zabbix server...${NC}"
+# ensure DBName/DBUser/DBPassword reflect provided values
+sed -i "s|^#\? DBName=.*|DBName=$DB_NAME|" /etc/zabbix/zabbix_server.conf
+sed -i "s|^#\? DBUser=.*|DBUser=$DB_USER|" /etc/zabbix/zabbix_server.conf
+sed -i "s|^#\? DBPassword=.*|DBPassword=$DB_PASS|" /etc/zabbix/zabbix_server.conf
 
-# --- Configure Zabbix server ---
-echo -e "${GREEN}[INFO] Configuring Zabbix server...${NC}"
-sed -i "s|^# DBPassword=.*|DBPassword=$DB_PASS|" /etc/zabbix/zabbix_server.conf
-
-# --- Configure Zabbix agent ---
-echo -e "${GREEN}[INFO] Configuring Zabbix agent...${NC}"
+# configure zabbix agent using directory-based config
+echo -e "${GREEN}[INFO] configuring Zabbix agent...${NC}"
 mkdir -p /etc/zabbix/zabbix_agentd.d
 cat > /etc/zabbix/zabbix_agentd.d/agent.conf <<EOF
 Server=$ZABBIX_IP
@@ -115,57 +130,81 @@ EOF
 chown root:root /etc/zabbix/zabbix_agentd.d/agent.conf
 chmod 644 /etc/zabbix/zabbix_agentd.d/agent.conf
 
-# --- Configure PHP timezone ---
-echo -e "${GREEN}[INFO] Setting PHP timezone...${NC}"
-PHP_INI=$(php --ini | grep "Loaded Configuration" | awk -F: '{print $2}' | xargs)
-[[ -f "$PHP_INI" ]] && sed -i "s|^;*date.timezone =.*|date.timezone = UTC|" "$PHP_INI"
+# configure php timezone for both CLI and FPM
+echo -e "${GREEN}[INFO] setting PHP timezone...${NC}"
+for SAPI in fpm cli; do
+    PHP_INI="/etc/php/${PHP_VER}/${SAPI}/php.ini"
+    [[ -f "$PHP_INI" ]] && sed -i "s|^;*date.timezone =.*|date.timezone = UTC|" "$PHP_INI"
+done
+systemctl restart "php${PHP_VER}-fpm" || true
 
-# --- Configure frontend ---
-echo -e "${GREEN}[INFO] Creating frontend configuration...${NC}"
+# create frontend config
+echo -e "${GREEN}[INFO] creating frontend configuration...${NC}"
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
 cat > "$FRONTEND_CONF" <<EOF
 <?php
-\$DB['TYPE']     = 'MYSQL';
-\$DB['SERVER']   = 'localhost';
-\$DB['PORT']     = '0';
-\$DB['DATABASE'] = '$DB_NAME';
-\$DB['USER']     = '$DB_USER';
-\$DB['PASSWORD'] = '$DB_PASS';
-\$ZBX_SERVER     = '$ZABBIX_IP';
-\$ZBX_SERVER_PORT= '10051';
-\$ZBX_SERVER_NAME= 'Zabbix Server';
-\$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
+$DB['TYPE']     = 'MYSQL';
+$DB['SERVER']   = 'localhost';
+$DB['PORT']     = '0';
+$DB['DATABASE'] = '$DB_NAME';
+$DB['USER']     = '$DB_USER';
+$DB['PASSWORD'] = '$DB_PASS';
+$ZBX_SERVER     = '$ZABBIX_IP';
+$ZBX_SERVER_PORT= '10051';
+$ZBX_SERVER_NAME= 'Zabbix Server';
+$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
 EOF
 chown www-data:www-data "$FRONTEND_CONF"
 chmod 640 "$FRONTEND_CONF"
 
-# --- Enable Apache Zabbix config ---
-echo -e "${GREEN}[INFO] enabling apache Zabbix frontend...${NC}"
+# enable apache zabbix config and start Apache immediately
+echo -e "${GREEN}[INFO] enabling Apache Zabbix frontend...${NC}"
 if command -v a2enconf >/dev/null 2>&1; then
     a2enconf zabbix
 else
     ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/zabbix.conf
 fi
 
-systemctl reload apache2
+echo -e "${GREEN}[INFO] starting Apache...${NC}"
+systemctl enable --now apache2
 
-# --- Start and enable services ---
-echo -e "${GREEN}[INFO] starting and enabling services...${NC}"
-systemctl daemon-reload
-systemctl restart zabbix-server zabbix-agent apache2
-systemctl enable zabbix-server zabbix-agent apache2
-
-# --- Verify agent status ---
-echo -e "${GREEN}[INFO] Checking Zabbix Agent status...${NC}"
-if systemctl is-active --quiet zabbix-agent; then
-    echo -e "${GREEN}[OK] Zabbix Agent is running.${NC}"
+# reload only if running
+if systemctl is-active --quiet apache2; then
+    echo -e "${GREEN}[INFO] reloading Apache...${NC}"
+    systemctl reload apache2
 else
-    echo -e "${RED}[ERROR] Zabbix Agent failed to start.${NC}"
-    echo "Check logs with: journalctl -xeu zabbix-agent"
+    echo -e "${RED}[ERROR] Apache failed to start; skipping reload.${NC}"
 fi
 
-# --- Cleanup ---
-echo -e "${GREEN}[INFO] Cleaning up temporary files...${NC}"
+# start and enable Zabbix services
+echo -e "${GREEN}[INFO] starting and enabling Zabbix services...${NC}"
+systemctl daemon-reload
+systemctl restart zabbix-server zabbix-agent
+systemctl enable zabbix-server zabbix-agent
+
+# Optionally set Frontend Admin password via API (best-effort)
+if [[ -n "${ZABBIX_ADMIN_PASS:-}" ]]; then
+    echo -e "${GREEN}[INFO] setting Zabbix Frontend Admin password...${NC}"
+    TOKEN=""
+    for i in {1..30}; do
+        TOKEN="$(curl -s -X POST -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
+            "http://127.0.0.1/zabbix/api_jsonrpc.php" | jq -r '.result // empty' || true)"
+        [[ -n "$TOKEN" ]] && break
+        sleep 2
+    done
+    if [[ -n "$TOKEN" ]]; then
+        curl -s -X POST -H 'Content-Type: application/json' \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"$ZABBIX_ADMIN_PASS\"},\"auth\":\"$TOKEN\",\"id\":1}" \
+            "http://127.0.0.1/zabbix/api_jsonrpc.php" >/dev/null || true
+        echo -e "${GREEN}[OK] Admin password updated.${NC}"
+    else
+        echo -e "${YELLOW}[WARN] Could not set Admin password automatically. You can change it in the UI.${NC}"
+    fi
+fi
+
+# cleanup temporary files and packages
+echo -e "${GREEN}[INFO] cleaning up temporary files...${NC}"
 rm -f /tmp/zabbix-release.deb
 apt autoremove -y
 
