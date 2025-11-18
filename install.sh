@@ -281,33 +281,6 @@ cat > "$FRONTEND_CONF" <<EOF
 ?>
 EOF
 
-# start and enable Zabbix services
-echo -e "${GREEN}[INFO] starting and enabling Zabbix services...${NC}"
-systemctl daemon-reload
-systemctl restart zabbix-server zabbix-agent
-systemctl enable zabbix-server zabbix-agent
-
-# Optionally set Frontend Admin password via API (best-effort)
-if [[ -n "${ZABBIX_ADMIN_PASS:-}" ]]; then
-    echo -e "${GREEN}[INFO] setting Zabbix Frontend Admin password...${NC}"
-    TOKEN=""
-    for i in {1..30}; do
-        TOKEN="$(curl -s -X POST -H 'Content-Type: application/json' \
-            -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
-            "http://127.0.0.1/zabbix/api_jsonrpc.php" | jq -r '.result // empty' || true)"
-        [[ -n "$TOKEN" ]] && break
-        sleep 2
-    done
-    if [[ -n "$TOKEN" ]]; then
-        curl -s -X POST -H 'Content-Type: application/json' \
-            -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"$ZABBIX_ADMIN_PASS\"},\"auth\":\"$TOKEN\",\"id\":1}" \
-            "http://127.0.0.1/zabbix/api_jsonrpc.php" >/dev/null || true
-        echo -e "${GREEN}[OK] Admin password updated.${NC}"
-    else
-        echo -e "${YELLOW}[WARN] Could not set Admin password automatically. You can change it in the UI.${NC}"
-    fi
-fi
-
 # cleanup temporary files and packages
 echo -e "${GREEN}[INFO] cleaning up temporary files...${NC}"
 rm -f /tmp/zabbix-release.deb
