@@ -24,8 +24,8 @@ DB_USER=${DB_USER:-zabbix}
 read -rsp "MariaDB root password (leave empty if socket auth): " ROOT_PASS; echo
 
 # Ask whether to remove supporting stack
-read -rp "Also purge MariaDB + PHP packages? [y/N]: " PURGE_STACK
-PURGE_STACK=${PURGE_STACK:-N}
+read -rp "Also purge ALL auxiliary packages (Apache, MariaDB, PHP, tools)? [y/N]: " PURGE_ALL
+PURGE_ALL=${PURGE_ALL:-N}
 
 echo -e "${GREEN}[INFO] Stopping services...${NC}"
 stop_if() { systemctl stop "$1" 2>/dev/null || true; systemctl disable "$1" 2>/dev/null || true; }
@@ -47,9 +47,10 @@ echo -e "${GREEN}[INFO] Purging Zabbix packages...${NC}"
 ZBX_PKGS=(zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent)
 apt purge -y "${ZBX_PKGS[@]}" 2>/dev/null || true
 
-if [[ "$PURGE_STACK" =~ ^[Yy]$ ]]; then
-    echo -e "${GREEN}[INFO] Purging MariaDB + PHP stack...${NC}"
-    apt purge -y mariadb-server mariadb-client php php-fpm php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl 2>/dev/null || true
+if [[ "$PURGE_ALL" =~ ^[Yy]$ ]]; then
+    echo -e "${GREEN}[INFO] Purging auxiliary stack (Apache, MariaDB, PHP, tools)...${NC}"
+    AUX_PKGS=(apache2 mariadb-server mariadb-client php php-fpm php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl wget curl gnupg2 jq apt-transport-https rsync socat ssl-cert fping snmpd)
+    apt purge -y "${AUX_PKGS[@]}" 2>/dev/null || true
 fi
 
 echo -e "${GREEN}[INFO] Removing residual files...${NC}"
@@ -60,6 +61,12 @@ rm -rf /etc/zabbix \
        /etc/apache2/conf-available/zabbix.conf \
        /etc/apache2/conf-enabled/zabbix.conf \
        /etc/zabbix/web/zabbix.conf.php
+# extra removals if full purge selected
+if [[ "$PURGE_ALL" =~ ^[Yy]$ ]]; then
+    rm -rf /etc/apache2 /var/log/apache2 \
+           /etc/php /var/lib/php /var/log/php* \
+           /var/lib/mysql /var/log/mysql* /etc/mysql
+fi
 
 echo -e "${GREEN}[INFO] Cleaning apt...${NC}"
 apt autoremove -y
@@ -67,6 +74,6 @@ apt autoclean -y
 
 echo -e "${GREEN}[INFO] Done.${NC}"
 echo "Removed packages: ${ZBX_PKGS[*]}"
-[[ "$PURGE_STACK" =~ ^[Yy]$ ]] && echo "Also purged MariaDB + PHP."
+[[ "$PURGE_ALL" =~ ^[Yy]$ ]] && echo "Also purged auxiliary packages (Apache, MariaDB, PHP, tools)."
 echo "Database/user dropped: $DB_NAME / $DB_USER"
 echo -e "${YELLOW}If you installed extra dependencies manually, review and remove them as needed.${NC}"
