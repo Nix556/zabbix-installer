@@ -132,34 +132,52 @@ wget -qO /tmp/zabbix-release.deb "$REPO_URL"
 dpkg -i /tmp/zabbix-release.deb
 apt update -y
 
-# Enable required Apache modules and PHP-FPM integration (ensure no mod_php/mpm_prefork)
-PHP_VER="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')" || true
-if command -v a2dismod >/dev/null 2>&1; then
-    a2dismod -f php8.* mpm_prefork || true
-fi
+# install zabbix server, frontend, agent (no recommends to avoid mod_php)
+echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
+DEBIAN_FRONTEND=noninteractive apt -o APT::Install-Recommends=false install -y \
+    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent
+
+# Ensure Apache uses PHP-FPM (purge mod_php if present, enable proxy + fpm)
 if dpkg -l | grep -q '^ii\s\+libapache2-mod-php'; then
     apt purge -y 'libapache2-mod-php*' || true
 fi
+if command -v a2dismod >/dev/null 2>&1; then
+    a2dismod -f php* mpm_prefork || true
+fi
+# Some images miss helper symlinks before first start; ensure dirs exist
+mkdir -p /etc/apache2/mods-available /etc/apache2/conf-available /etc/apache2/conf-enabled
 if command -v a2enmod >/dev/null 2>&1; then
     a2enmod mpm_event proxy proxy_fcgi setenvif || true
-    a2enconf "php${PHP_VER}-fpm" || true
 fi
-# only enable unit for now; we'll start after config is ensured
-systemctl enable "php${PHP_VER}-fpm" || true
-
-# start FPM now that config exists
-systemctl restart "php${PHP_VER}-fpm" || true
-
-# install zabbix server, frontend, agent
-echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
-DEBIAN_FRONTEND=noninteractive apt install -y \
-    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent
+# Create php-fpm Apache conf if distro one is missing
+PHP_FPM_CONF="/etc/apache2/conf-available/php${PHP_VER}-fpm.conf"
+if [[ ! -f "$PHP_FPM_CONF" ]]; then
+    cat >"$PHP_FPM_CONF" <<EOF
+# minimal php-fpm wiring
+<FilesMatch \.php$>
+    SetHandler "proxy:unix:/run/php/php${PHP_VER}-fpm.sock|fcgi://localhost/"
+</FilesMatch>
+EOF
+fi
+if command -v a2enconf >/dev/null 2>&1; then
+    a2enconf "php${PHP_VER}-fpm" || a2enconf "$(basename "$PHP_FPM_CONF" .conf)" || true
+fi
+systemctl enable --now "php${PHP_VER}-fpm" || true
+systemctl enable --now apache2 || true
+systemctl reload apache2 || true
 
 # configure database
 echo -e "${GREEN}[INFO] configuring MariaDB...${NC}"
+# ensure mariadb is running (some images don't auto-start)
+systemctl enable --now mariadb 2>/dev/null || systemctl enable --now mysql 2>/dev/null || true
+# wait for socket up to 30s
+for i in {1..30}; do
+    [[ -S /run/mysqld/mysqld.sock ]] && break
+    sleep 1
+done
+
 MYSQL_ROOT_ARGS=(-uroot)
 [[ -n "${ROOT_PASS:-}" ]] && MYSQL_ROOT_ARGS+=(-p"$ROOT_PASS")
-
 mysql "${MYSQL_ROOT_ARGS[@]}" <<EOF
 CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
