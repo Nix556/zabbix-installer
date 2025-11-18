@@ -246,6 +246,8 @@ cat > "$FRONTEND_CONF" <<EOF
 \$DB['DATABASE'] = '$DB_NAME';
 \$DB['USER']     = '$DB_USER';
 \$DB['PASSWORD'] = '$DB_PASS';
+?>
+EOF
 
 echo -e "${GREEN}[INFO] starting Apache...${NC}"
 systemctl enable --now apache2 || true
