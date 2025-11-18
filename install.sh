@@ -272,14 +272,23 @@ FRONTEND_DB_TYPE="MYSQL"
 php -m 2>/dev/null | grep -qi '^mysqli$' || FRONTEND_DB_TYPE="MYSQLi"
 cat > "$FRONTEND_CONF" <<EOF
 <?php
-\$DB['TYPE']     = '${FRONTEND_DB_TYPE}';
-\$DB['SERVER']   = 'localhost';
-\$DB['PORT']     = '0';
-\$DB['DATABASE'] = '$DB_NAME';
-\$DB['USER']     = '$DB_USER';
-\$DB['PASSWORD'] = '$DB_PASS';
+$DB['TYPE']     = '${FRONTEND_DB_TYPE}';
+$DB['SERVER']   = 'localhost';
+$DB['PORT']     = '0';
+$DB['DATABASE'] = '$DB_NAME';
+$DB['USER']     = '$DB_USER';
+$DB['PASSWORD'] = '$DB_PASS';
 ?>
 EOF
+# start / enable Zabbix services (previously missing)
+echo -e "${GREEN}[INFO] starting Zabbix services...${NC}"
+systemctl enable --now zabbix-server zabbix-agent || true
+sleep 2
+systemctl is-active --quiet zabbix-server || echo -e "${YELLOW}[WARN] zabbix-server is not active yet. Check /var/log/zabbix/zabbix_server.log.${NC}"
+# Optionally set Frontend Admin password via API (best-effort)
+if [[ -n "${ZABBIX_ADMIN_PASS:-}" ]]; then
+    # ...existing code...
+fi
 
 # cleanup temporary files and packages
 echo -e "${GREEN}[INFO] cleaning up temporary files...${NC}"
