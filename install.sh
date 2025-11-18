@@ -67,6 +67,43 @@ echo "  DB: $DB_NAME / $DB_USER"
 echo "  Zabbix IP: $ZABBIX_IP"
 echo "  Frontend Admin password: $ZABBIX_ADMIN_PASS"
 
+# Determine target PHP version early (fallback by OS if php not installed yet)
+if command -v php >/dev/null 2>&1; then
+    PHP_VER="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+else
+    case "${OS}-${VER}" in
+        debian-12) PHP_VER="8.2" ;;
+        ubuntu-22.04) PHP_VER="8.1" ;;
+        *) PHP_VER="8.2" ;; # safe default
+    esac
+fi
+
+# Pre-create minimal PHP-FPM config to survive dpkg conf-miss scenarios
+ensure_php_fpm_baseline() {
+    local base="/etc/php/${PHP_VER}/fpm"
+    mkdir -p "${base}/pool.d" /run/php
+    [[ -f "${base}/php-fpm.conf" ]] || cat >"${base}/php-fpm.conf" <<EOF
+[global]
+pid = /run/php/php${PHP_VER}-fpm.pid
+error_log = /var/log/php${PHP_VER}-fpm.log
+include=/etc/php/${PHP_VER}/fpm/pool.d/*.conf
+EOF
+    [[ -f "${base}/pool.d/www.conf" ]] || cat >"${base}/pool.d/www.conf" <<EOF
+[www]
+user = www-data
+group = www-data
+listen = /run/php/php${PHP_VER}-fpm.sock
+listen.owner = www-data
+listen.group = www-data
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+EOF
+}
+ensure_php_fpm_baseline
+
 # pre-create mysql dir/file to avoid mariadb-common alt path error
 mkdir -p /etc/mysql
 [[ -f /etc/mysql/mariadb.cnf ]] || echo "# placeholder created by install.sh" > /etc/mysql/mariadb.cnf
@@ -96,7 +133,7 @@ dpkg -i /tmp/zabbix-release.deb
 apt update -y
 
 # Enable required Apache modules and PHP-FPM integration (ensure no mod_php/mpm_prefork)
-PHP_VER="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+PHP_VER="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')" || true
 if command -v a2dismod >/dev/null 2>&1; then
     a2dismod -f php8.* mpm_prefork || true
 fi
@@ -110,36 +147,6 @@ fi
 # only enable unit for now; we'll start after config is ensured
 systemctl enable "php${PHP_VER}-fpm" || true
 
-# Repair missing PHP-FPM configs if they were purged previously
-if [[ ! -f "/etc/php/${PHP_VER}/fpm/php-fpm.conf" ]]; then
-    echo -e "${YELLOW}[WARN] PHP-FPM config missing; restoring defaults...${NC}"
-    mkdir -p "/etc/php/${PHP_VER}/fpm/pool.d"
-    apt -y -o Dpkg::Options::="--force-confmiss" --reinstall install "php${PHP_VER}-fpm" "php${PHP_VER}-common" || true
-    # if still missing, write minimal safe defaults
-    if [[ ! -f "/etc/php/${PHP_VER}/fpm/php-fpm.conf" ]]; then
-        cat >"/etc/php/${PHP_VER}/fpm/php-fpm.conf" <<EOF
-[global]
-pid = /run/php/php${PHP_VER}-fpm.pid
-error_log = /var/log/php${PHP_VER}-fpm.log
-include=/etc/php/${PHP_VER}/fpm/pool.d/*.conf
-EOF
-    fi
-    if [[ ! -f "/etc/php/${PHP_VER}/fpm/pool.d/www.conf" ]]; then
-        cat >"/etc/php/${PHP_VER}/fpm/pool.d/www.conf" <<EOF
-[www]
-user = www-data
-group = www-data
-listen = /run/php/php${PHP_VER}-fpm.sock
-listen.owner = www-data
-listen.group = www-data
-pm = dynamic
-pm.max_children = 5
-pm.start_servers = 2
-pm.min_spare_servers = 1
-pm.max_spare_servers = 3
-EOF
-    fi
-fi
 # start FPM now that config exists
 systemctl restart "php${PHP_VER}-fpm" || true
 
