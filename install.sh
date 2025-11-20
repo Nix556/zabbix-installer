@@ -133,11 +133,17 @@ if command -v a2enmod >/dev/null 2>&1; then
     a2enmod mpm_event proxy proxy_fcgi setenvif alias || true
 fi
 
+if [[ -d /usr/share/zabbix/ui ]]; then
+    ZABBIX_UI_DIR="/usr/share/zabbix/ui"
+else
+    ZABBIX_UI_DIR="/usr/share/zabbix"
+fi
+
 ZABBIX_APACHE_CONF="/etc/apache2/conf-available/zabbix.conf"
-if [[ ! -f "$ZABBIX_APACHE_CONF" ]]; then
-    cat > "$ZABBIX_APACHE_CONF" <<EOF
-Alias /zabbix /usr/share/zabbix
-<Directory "/usr/share/zabbix">
+cat > "$ZABBIX_APACHE_CONF" <<EOF
+Alias /zabbix $ZABBIX_UI_DIR
+
+<Directory "$ZABBIX_UI_DIR">
     Options FollowSymLinks
     AllowOverride None
     Require all granted
@@ -150,19 +156,13 @@ Alias /zabbix /usr/share/zabbix
     </FilesMatch>
 </IfModule>
 EOF
-fi
 
 if command -v a2enconf >/dev/null 2>&1; then
     a2enconf zabbix || ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/zabbix.conf || true
 fi
 
-# -------------- FIX ADDED HERE --------------
-# Debian 12 has a restrictive rule: /usr/share -> Require all denied
-# This override guarantees Zabbix is accessible.
-
 cat > /etc/apache2/conf-available/zabbix-override.conf <<EOF
-# Override Debian's restrictive /usr/share rule
-<Directory /usr/share/zabbix>
+<Directory $ZABBIX_UI_DIR>
     Options FollowSymLinks
     AllowOverride None
     Require all granted
@@ -170,7 +170,6 @@ cat > /etc/apache2/conf-available/zabbix-override.conf <<EOF
 EOF
 
 a2enconf zabbix-override
-# --------------------------------------------
 
 systemctl enable --now apache2 || true
 systemctl enable --now "php${PHP_VER}-fpm" || true
