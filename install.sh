@@ -199,12 +199,9 @@ echo -e "${GREEN}[INFO] configuring Zabbix server...${NC}"
 sed -i "s|^#\? DBName=.*|DBName=$DB_NAME|" /etc/zabbix/zabbix_server.conf
 sed -i "s|^#\? DBUser=.*|DBUser=$DB_USER|" /etc/zabbix/zabbix_server.conf
 sed -i "s|^#\? DBPassword=.*|DBPassword=$DB_PASS|" /etc/zabbix/zabbix_server.conf
-# ensure DBType is lowercase mysql for modern Zabbix
-if grep -Eq '^[[:space:]]*#?[[:space:]]*DBType' /etc/zabbix/zabbix_server.conf; then
-    sed -i -E "s|^[[:space:]]*#?[[:space:]]*DBType=.*|DBType=mysql|" /etc/zabbix/zabbix_server.conf
-else
-    echo "DBType=mysql" >> /etc/zabbix/zabbix_server.conf
-fi
+
+# Remove any DBType lines from server config (DBType is not a valid zabbix_server.conf parameter)
+sed -i '/^[[:space:]]*#\?\s*DBType=/Id' /etc/zabbix/zabbix_server.conf || true
 
 # configure zabbix agent using directory-based config
 echo -e "${GREEN}[INFO] configuring Zabbix agent...${NC}"
@@ -278,6 +275,9 @@ cat > "$FRONTEND_CONF" <<EOF
 \$DB['DATABASE'] = '$DB_NAME';
 \$DB['USER']     = '$DB_USER';
 \$DB['PASSWORD'] = '$DB_PASS';
+?>
+EOF
+
 ?>
 EOF
 
