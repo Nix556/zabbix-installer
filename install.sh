@@ -137,19 +137,22 @@ echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
 DEBIAN_FRONTEND=noninteractive apt -o APT::Install-Recommends=false install -y \
     zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent
 
-# Ensure Apache uses PHP-FPM (purge mod_php if present, enable proxy + fpm)
-if dpkg -l | grep -q '^ii\s\+libapache2-mod-php'; then
-    apt purge -y 'libapache2-mod-php*' || true
-fi
+# Ensure any mod_php that was pulled in doesn't leave the system in a broken dpkg state.
+# Purge mod_php variants, try to fix broken installs and configure packages.
+echo -e "${GREEN}[INFO] cleaning up possible libapache2-mod-php leftovers...${NC}"
+apt -y purge 'libapache2-mod-php*' || true
+# attempt to finish configuration if dpkg left packages unconfigured
+dpkg --configure -a || true
+apt --fix-broken install -y || true
+
+# Ensure Apache is configured to use PHP-FPM (disable prefork/mod_php, enable event + proxy_fcgi)
 if command -v a2dismod >/dev/null 2>&1; then
     a2dismod -f php* mpm_prefork || true
 fi
-# Some images miss helper symlinks before first start; ensure dirs exist
-mkdir -p /etc/apache2/mods-available /etc/apache2/conf-available /etc/apache2/conf-enabled
 if command -v a2enmod >/dev/null 2>&1; then
     a2enmod mpm_event proxy proxy_fcgi setenvif || true
 fi
-# Create php-fpm Apache conf if distro one is missing
+# (Re)create and enable php-fpm Apache conf if missing
 PHP_FPM_CONF="/etc/apache2/conf-available/php${PHP_VER}-fpm.conf"
 if [[ ! -f "$PHP_FPM_CONF" ]]; then
     cat >"$PHP_FPM_CONF" <<EOF
@@ -162,9 +165,15 @@ fi
 if command -v a2enconf >/dev/null 2>&1; then
     a2enconf "php${PHP_VER}-fpm" || a2enconf "$(basename "$PHP_FPM_CONF" .conf)" || true
 fi
+
+# restart services to apply clean Apache + PHP-FPM wiring
 systemctl enable --now "php${PHP_VER}-fpm" || true
-systemctl enable --now apache2 || true
-systemctl reload apache2 || true
+# try restart, fallback to reload
+if systemctl restart apache2 2>/dev/null; then
+    true
+else
+    systemctl reload apache2 || true
+fi
 
 # configure database
 echo -e "${GREEN}[INFO] configuring MariaDB...${NC}"
@@ -278,15 +287,6 @@ cat > "$FRONTEND_CONF" <<EOF
 ?>
 EOF
 
-# start / enable Zabbix services
-echo -e "${GREEN}[INFO] starting Zabbix services...${NC}"
-systemctl enable --now zabbix-server zabbix-agent || true
-sleep 2
-systemctl is-active --quiet zabbix-server || echo -e "${YELLOW}[WARN] zabbix-server is not active yet. Check /var/log/zabbix/zabbix_server.log.${NC}"
-# set Frontend Admin password via API
-if [[ -n "${ZABBIX_ADMIN_PASS:-}" ]]; then
-echo -e "${GREEN}[INFO] setting Zabbix Frontend Admin password...${NC}"
-    TOKEN=""
     for i in {1..30}; do
         TOKEN="$(curl -s -X POST -H 'Content-Type: application/json' \
             -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
