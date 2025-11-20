@@ -45,11 +45,29 @@ else
     echo -e "${YELLOW}[WARN] mysql client not found; skipping database/user removal.${NC}"
 fi
 
+# Remove Zabbix files first so dpkg won't complain about non-empty directories during purge
+echo -e "${GREEN}[INFO] Removing Zabbix residual files (before purge)...${NC}"
+rm -rf /var/log/zabbix \
+       /var/lib/zabbix \
+       /usr/share/zabbix \
+       /etc/zabbix/web/zabbix.conf.php
+# remove agent d dir to avoid dpkg warnings
+rm -rf /etc/zabbix/zabbix_agentd.d || true
+# remove any zabbix apache conf files early
+rm -f /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/zabbix.conf || true
+
 echo -e "${GREEN}[INFO] Purging Zabbix packages...${NC}"
 ZBX_PKGS=(zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent)
 INSTALLED_ZBX=($(dpkg -l | awk '/^ii/ {print $2}' | grep -x -F -f <(printf "%s\n" "${ZBX_PKGS[@]}") || true))
 [[ ${#INSTALLED_ZBX[@]} -gt 0 ]] && apt purge -y "${INSTALLED_ZBX[@]}" 2>/dev/null || echo -e "${YELLOW}[INFO] No Zabbix packages installed to purge.${NC}"
+
 if [[ "$PURGE_ALL" =~ ^[Yy]$ ]]; then
+    # Remove auxiliary residual files before purge to avoid dpkg warnings
+    echo -e "${GREEN}[INFO] Removing auxiliary residual files (before purge)...${NC}"
+    rm -rf /etc/apache2 /var/log/apache2 \
+           /etc/php /var/lib/php /var/log/php* \
+           /var/lib/mysql /var/log/mysql* /etc/mysql || true
+
     echo -e "${GREEN}[INFO] Purging auxiliary stack (Apache, MariaDB, PHP, tools)...${NC}"
     AUX_PKGS=(apache2 mariadb-server mariadb-client
               php php-fpm php-mysql php-xml php-bcmath php-mbstring php-ldap php-json php-gd php-zip php-curl
@@ -57,21 +75,6 @@ if [[ "$PURGE_ALL" =~ ^[Yy]$ ]]; then
               wget curl gnupg2 jq apt-transport-https rsync socat ssl-cert fping snmpd)
     INSTALLED_AUX=($(dpkg -l | awk '/^ii/ {print $2}' | grep -x -F -f <(printf "%s\n" "${AUX_PKGS[@]}") || true))
     [[ ${#INSTALLED_AUX[@]} -gt 0 ]] && apt purge -y "${INSTALLED_AUX[@]}" 2>/dev/null || echo -e "${YELLOW}[INFO] No auxiliary packages installed to purge.${NC}"
-fi
-
-echo -e "${GREEN}[INFO] Removing residual files...${NC}"
-rm -rf /etc/zabbix \
-       /var/log/zabbix \
-       /var/lib/zabbix \
-       /usr/share/zabbix \
-       /etc/apache2/conf-available/zabbix.conf \
-       /etc/apache2/conf-enabled/zabbix.conf \
-       /etc/zabbix/web/zabbix.conf.php
-# extra removals if full purge selected
-if [[ "$PURGE_ALL" =~ ^[Yy]$ ]]; then
-    rm -rf /etc/apache2 /var/log/apache2 \
-           /etc/php /var/lib/php /var/log/php* \
-           /var/lib/mysql /var/log/mysql* /etc/mysql
 fi
 
 echo -e "${GREEN}[INFO] Cleaning apt...${NC}"
