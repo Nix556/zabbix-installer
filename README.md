@@ -43,7 +43,6 @@ Make sure scripts are executable:
 
 ```bash
 chmod +x install.sh uninstall.sh zabbix_api.sh
-chmod +x lib/*.sh
 ```
 
 ---
