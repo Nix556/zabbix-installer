@@ -272,12 +272,12 @@ FRONTEND_DB_TYPE="MYSQL"
 php -m 2>/dev/null | grep -qi '^mysqli$' || FRONTEND_DB_TYPE="MYSQLi"
 cat > "$FRONTEND_CONF" <<EOF
 <?php
-/$DB['TYPE']     = '${FRONTEND_DB_TYPE}';
-/$DB['SERVER']   = 'localhost';
-/$DB['PORT']     = '0';
-/$DB['DATABASE'] = '$DB_NAME';
-/$DB['USER']     = '$DB_USER';
-/$DB['PASSWORD'] = '$DB_PASS';
+\$DB['TYPE']     = '${FRONTEND_DB_TYPE}';
+\$DB['SERVER']   = 'localhost';
+\$DB['PORT']     = '0';
+\$DB['DATABASE'] = '$DB_NAME';
+\$DB['USER']     = '$DB_USER';
+\$DB['PASSWORD'] = '$DB_PASS';
 ?>
 EOF
 
