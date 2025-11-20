@@ -7,13 +7,11 @@ export PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 set -euo pipefail
 IFS=$'\n\t'
 
-# move colors before first usage
 RED="\033[0;31m"
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 NC="\033[0m"
 
-# require root and non-interactive apt
 if [[ $EUID -ne 0 ]]; then
     echo -e "${RED}[ERROR] please run as root (sudo).${NC}"
     exit 1
@@ -21,7 +19,6 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 
 echo -e "${GREEN}[INFO] detecting OS...${NC}"
-# Use /etc/os-release to avoid relying on lsb_release
 . /etc/os-release
 OS="$ID"
 VER="$VERSION_ID"
@@ -36,7 +33,6 @@ else
 fi
 echo -e "${GREEN}[OK] OS detected: ${PRETTY_NAME}${NC}"
 
-# user input
 read -rp "enter Zabbix Server IP [127.0.0.1]: " ZABBIX_IP
 ZABBIX_IP=${ZABBIX_IP:-127.0.0.1}
 
@@ -52,7 +48,6 @@ while true; do
     [[ -n "$DB_PASS" ]] && break
 done
 
-# Make MariaDB root password optional (socket auth on Debian/Ubuntu defaults)
 while true; do
     read -rsp "enter MariaDB root password (leave empty if using socket auth): " ROOT_PASS
     echo
@@ -67,18 +62,16 @@ echo "  DB: $DB_NAME / $DB_USER"
 echo "  Zabbix IP: $ZABBIX_IP"
 echo "  Frontend Admin password: $ZABBIX_ADMIN_PASS"
 
-# Determine target PHP version early (fallback by OS if php not installed yet)
 if command -v php >/dev/null 2>&1; then
     PHP_VER="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
 else
     case "${OS}-${VER}" in
         debian-12) PHP_VER="8.2" ;;
         ubuntu-22.04) PHP_VER="8.1" ;;
-        *) PHP_VER="8.2" ;; # safe default
+        *) PHP_VER="8.2" ;;
     esac
 fi
 
-# Pre-create minimal PHP-FPM config to survive dpkg conf-miss scenarios
 ensure_php_fpm_baseline() {
     local base="/etc/php/${PHP_VER}/fpm"
     mkdir -p "${base}/pool.d" /run/php
@@ -104,45 +97,38 @@ EOF
 }
 ensure_php_fpm_baseline
 
-# pre-create mysql dir/file to avoid mariadb-common alt path error
 mkdir -p /etc/mysql
-[[ -f /etc/mysql/mariadb.cnf ]] || echo "# placeholder created by install.sh" > /etc/mysql/mariadb.cnf
+[[ -f /etc/mysql/mariadb.cnf ]] || echo "# placeholder" > /etc/mysql/mariadb.cnf
 
-# install prerequisites
 echo -e "${GREEN}[INFO] installing required packages...${NC}"
 apt update -y
-# avoid php meta (pulls mod_php); install without recommends
 PKGS=(wget curl gnupg2 jq apt-transport-https
       php-cli php-fpm php-mysql php-xml php-bcmath php-mbstring php-ldap php-gd php-zip php-curl
       mariadb-server mariadb-client rsync socat ssl-cert fping snmpd apache2)
+
 set +e
 apt -o APT::Install-Recommends=false install -y "${PKGS[@]}"
 APT_STATUS=$?
 if (( APT_STATUS != 0 )); then
-    echo -e "${YELLOW}[WARN] initial package install failed (code $APT_STATUS). Retrying with fix-broken...${NC}"
+    echo -e "${YELLOW}[WARN] retrying fix-broken...${NC}"
     apt --fix-broken install -y
     apt -o APT::Install-Recommends=false install -y "${PKGS[@]}"
-    (( $? == 0 )) || { echo -e "${RED}[ERROR] package installation failed after retry.${NC}"; exit 1; }
 fi
 set -e
 
-# add zabbix repo
 echo -e "${GREEN}[INFO] adding Zabbix repository...${NC}"
 wget -qO /tmp/zabbix-release.deb "$REPO_URL"
 dpkg -i /tmp/zabbix-release.deb
 apt update -y
 
-# install zabbix server, frontend, agent (no recommends to avoid mod_php)
 echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
-DEBIAN_FRONTEND=noninteractive apt -o APT::Install-Recommends=false install -y \
+apt -o APT::Install-Recommends=false install -y \
     zabbix-server-mysql zabbix-frontend-php zabbix-sql-scripts zabbix-agent
 
-# Ensure any libapache2-mod-php leftovers are removed if present
 apt -y purge 'libapache2-mod-php*' || true
 dpkg --configure -a || true
 apt --fix-broken install -y || true
 
-# Configure Apache to serve the Zabbix frontend via PHP-FPM (avoid using mod_php)
 if command -v a2enmod >/dev/null 2>&1; then
     a2enmod mpm_event proxy proxy_fcgi setenvif alias || true
 fi
@@ -150,7 +136,6 @@ fi
 ZABBIX_APACHE_CONF="/etc/apache2/conf-available/zabbix.conf"
 if [[ ! -f "$ZABBIX_APACHE_CONF" ]]; then
     cat > "$ZABBIX_APACHE_CONF" <<EOF
-# filepath: /etc/apache2/conf-available/zabbix.conf
 Alias /zabbix /usr/share/zabbix
 <Directory "/usr/share/zabbix">
     Options FollowSymLinks
@@ -159,7 +144,6 @@ Alias /zabbix /usr/share/zabbix
     DirectoryIndex index.php
 </Directory>
 
-# PHP-FPM via unix socket
 <IfModule proxy_fcgi_module>
     <FilesMatch \.php$>
         SetHandler "proxy:unix:/run/php/php${PHP_VER}-fpm.sock|fcgi://localhost/"
@@ -172,27 +156,30 @@ if command -v a2enconf >/dev/null 2>&1; then
     a2enconf zabbix || ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/zabbix.conf || true
 fi
 
-# restart/reload apache to pick up conf (php-fpm should already be enabled earlier)
-if systemctl is-active --quiet apache2; then
-    systemctl reload apache2 || systemctl restart apache2 || true
-else
-    systemctl enable --now apache2 || true
-fi
+# -------------- FIX ADDED HERE --------------
+# Debian 12 has a restrictive rule: /usr/share -> Require all denied
+# This override guarantees Zabbix is accessible.
 
-# restart services to apply clean Apache + PHP-FPM wiring
+cat > /etc/apache2/conf-available/zabbix-override.conf <<EOF
+# Override Debian's restrictive /usr/share rule
+<Directory /usr/share/zabbix>
+    Options FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+EOF
+
+a2enconf zabbix-override
+# --------------------------------------------
+
+systemctl enable --now apache2 || true
 systemctl enable --now "php${PHP_VER}-fpm" || true
-# try restart, fallback to reload
-if systemctl restart apache2 2>/dev/null; then
-    true
-else
-    systemctl reload apache2 || true
-fi
+systemctl restart apache2 || systemctl reload apache2 || true
 
-# configure database
 echo -e "${GREEN}[INFO] configuring MariaDB...${NC}"
-# ensure mariadb is running (some images don't auto-start)
-systemctl enable --now mariadb 2>/dev/null || systemctl enable --now mysql 2>/dev/null || true
-# wait for socket up to 30s
+
+systemctl enable --now mariadb || systemctl enable --now mysql || true
+
 for i in {1..30}; do
     [[ -S /run/mysqld/mysqld.sock ]] && break
     sleep 1
@@ -200,6 +187,7 @@ done
 
 MYSQL_ROOT_ARGS=(-uroot)
 [[ -n "${ROOT_PASS:-}" ]] && MYSQL_ROOT_ARGS+=(-p"$ROOT_PASS")
+
 mysql "${MYSQL_ROOT_ARGS[@]}" <<EOF
 CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
@@ -207,25 +195,19 @@ GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
-# Import schema only if not present
 echo -e "${GREEN}[INFO] importing initial Zabbix schema (if needed)...${NC}"
 if ! mysql "${MYSQL_ROOT_ARGS[@]}" -Nse "SELECT 1 FROM information_schema.tables WHERE table_schema='$DB_NAME' AND table_name='users' LIMIT 1;" | grep -q 1; then
-    zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | mysql --default-character-set=utf8mb4 -u"$DB_USER" -p"$DB_PASS" "$DB_NAME"
+    zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | mysql -u"$DB_USER" -p"$DB_PASS" "$DB_NAME"
 else
-    echo -e "${YELLOW}[SKIP] schema already exists in $DB_NAME.${NC}"
+    echo -e "${YELLOW}[SKIP] schema already exists.${NC}"
 fi
 
-# configure zabbix server
 echo -e "${GREEN}[INFO] configuring Zabbix server...${NC}"
-# ensure DBName/DBUser/DBPassword reflect provided values
 sed -i "s|^#\? DBName=.*|DBName=$DB_NAME|" /etc/zabbix/zabbix_server.conf
 sed -i "s|^#\? DBUser=.*|DBUser=$DB_USER|" /etc/zabbix/zabbix_server.conf
 sed -i "s|^#\? DBPassword=.*|DBPassword=$DB_PASS|" /etc/zabbix/zabbix_server.conf
-
-# Remove any DBType lines from server config (DBType is not a valid zabbix_server.conf parameter)
 sed -i '/^[[:space:]]*#\?\s*DBType=/Id' /etc/zabbix/zabbix_server.conf || true
 
-# configure zabbix agent using directory-based config
 echo -e "${GREEN}[INFO] configuring Zabbix agent...${NC}"
 mkdir -p /etc/zabbix/zabbix_agentd.d
 cat > /etc/zabbix/zabbix_agentd.d/agent.conf <<EOF
@@ -233,18 +215,13 @@ Server=$ZABBIX_IP
 ServerActive=$ZABBIX_IP
 Hostname=$(hostname)
 EOF
-chown root:root /etc/zabbix/zabbix_agentd.d/agent.conf
-chmod 644 /etc/zabbix/zabbix_agentd.d/agent.conf
 
-# configure php timezone for both CLI and FPM
 echo -e "${GREEN}[INFO] setting PHP timezone...${NC}"
 for SAPI in fpm cli; do
     PHP_INI="/etc/php/${PHP_VER}/${SAPI}/php.ini"
-    [[ -f "$PHP_INI" ]] && sed -i "s|^;*date.timezone =.*|date.timezone = UTC|" "$PHP_INI"
+    sed -i "s|^;*date.timezone =.*|date.timezone = UTC|" "$PHP_INI" || true
 done
 
-# Ensure required PHP MySQL extensions are enabled (mysqli, pdo_mysql)
-echo -e "${GREEN}[INFO] ensuring PHP MySQL extensions (mysqli, pdo_mysql) are enabled...${NC}"
 ensure_php_exts() {
     local exts=(mysqli pdo_mysql)
     for ext in "${exts[@]}"; do
@@ -258,35 +235,11 @@ ensure_php_exts() {
     done
 }
 ensure_php_exts
-# Create a minimal php.ini for FPM/CLI if dpkg refused to restore it (ensures MySQL drivers are loaded)
-ensure_php_ini_baseline() {
-	for SAPI in fpm cli; do
-		local INI="/etc/php/${PHP_VER}/${SAPI}/php.ini"
-		mkdir -p "/etc/php/${PHP_VER}/${SAPI}"
-		if [[ ! -f "$INI" ]]; then
-			cat >"$INI" <<EOF
-[PHP]
-date.timezone = UTC
-; ensure MySQL drivers are available for Zabbix frontend
-extension=mysqli
-extension=pdo_mysql
-; common sane defaults
-expose_php = Off
-memory_limit = 256M
-post_max_size = 16M
-upload_max_filesize = 16M
-max_execution_time = 300
-EOF
-		fi
-	done
-}
-ensure_php_ini_baseline
+
 systemctl restart "php${PHP_VER}-fpm" || true
 
-# create frontend config
 echo -e "${GREEN}[INFO] creating frontend configuration...${NC}"
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
-# Prefer MYSQL (expects mysqli extension). Fallback to MYSQLi if mysqli is unavailable.
 FRONTEND_DB_TYPE="mysql"
 php -m 2>/dev/null | grep -qi '^mysqli$' || FRONTEND_DB_TYPE="mysqli"
 cat > "$FRONTEND_CONF" <<EOF
@@ -300,8 +253,7 @@ cat > "$FRONTEND_CONF" <<EOF
 ?>
 EOF
 
-# cleanup temporary files and packages
-echo -e "${GREEN}[INFO] cleaning up temporary files...${NC}"
+echo -e "${GREEN}[INFO] cleaning up...${NC}"
 rm -f /tmp/zabbix-release.deb
 apt autoremove -y
 
