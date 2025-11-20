@@ -265,8 +265,8 @@ systemctl restart "php${PHP_VER}-fpm" || true
 echo -e "${GREEN}[INFO] creating frontend configuration...${NC}"
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
 # Prefer MYSQL (expects mysqli extension). Fallback to MYSQLi if mysqli is unavailable.
-FRONTEND_DB_TYPE="MYSQL"
-php -m 2>/dev/null | grep -qi '^mysqli$' || FRONTEND_DB_TYPE="MYSQLi"
+FRONTEND_DB_TYPE="mysql"
+php -m 2>/dev/null | grep -qi '^mysqli$' || FRONTEND_DB_TYPE="mysqli"
 cat > "$FRONTEND_CONF" <<EOF
 <?php
 \$DB['TYPE']     = '${FRONTEND_DB_TYPE}';
@@ -278,15 +278,12 @@ cat > "$FRONTEND_CONF" <<EOF
 ?>
 EOF
 
-?>
-EOF
-
-# start / enable Zabbix services (previously missing)
+# start / enable Zabbix services
 echo -e "${GREEN}[INFO] starting Zabbix services...${NC}"
 systemctl enable --now zabbix-server zabbix-agent || true
 sleep 2
 systemctl is-active --quiet zabbix-server || echo -e "${YELLOW}[WARN] zabbix-server is not active yet. Check /var/log/zabbix/zabbix_server.log.${NC}"
-# Optionally set Frontend Admin password via API (best-effort)
+# set Frontend Admin password via API
 if [[ -n "${ZABBIX_ADMIN_PASS:-}" ]]; then
 echo -e "${GREEN}[INFO] setting Zabbix Frontend Admin password...${NC}"
     TOKEN=""
