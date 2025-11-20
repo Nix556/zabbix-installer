@@ -239,8 +239,7 @@ systemctl restart "php${PHP_VER}-fpm" || true
 
 echo -e "${GREEN}[INFO] creating frontend configuration...${NC}"
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
-FRONTEND_DB_TYPE="mysql"
-php -m 2>/dev/null | grep -qi '^mysqli$' || FRONTEND_DB_TYPE="mysqli"
+FRONTEND_DB_TYPE="MYSQL"
 cat > "$FRONTEND_CONF" <<EOF
 <?php
 \$DB['TYPE']     = '${FRONTEND_DB_TYPE}';
