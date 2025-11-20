@@ -135,35 +135,48 @@ apt update -y
 # install zabbix server, frontend, agent (no recommends to avoid mod_php)
 echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
 DEBIAN_FRONTEND=noninteractive apt -o APT::Install-Recommends=false install -y \
-    zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent
+    zabbix-server-mysql zabbix-frontend-php zabbix-sql-scripts zabbix-agent
 
-# Ensure any mod_php that was pulled in doesn't leave the system in a broken dpkg state.
-# Purge mod_php variants, try to fix broken installs and configure packages.
-echo -e "${GREEN}[INFO] cleaning up possible libapache2-mod-php leftovers...${NC}"
+# Ensure any libapache2-mod-php leftovers are removed if present
 apt -y purge 'libapache2-mod-php*' || true
-# attempt to finish configuration if dpkg left packages unconfigured
 dpkg --configure -a || true
 apt --fix-broken install -y || true
 
-# Ensure Apache is configured to use PHP-FPM (disable prefork/mod_php, enable event + proxy_fcgi)
-if command -v a2dismod >/dev/null 2>&1; then
-    a2dismod -f php* mpm_prefork || true
-fi
+# Configure Apache to serve the Zabbix frontend via PHP-FPM (avoid using mod_php)
 if command -v a2enmod >/dev/null 2>&1; then
-    a2enmod mpm_event proxy proxy_fcgi setenvif || true
+    a2enmod mpm_event proxy proxy_fcgi setenvif alias || true
 fi
-# (Re)create and enable php-fpm Apache conf if missing
-PHP_FPM_CONF="/etc/apache2/conf-available/php${PHP_VER}-fpm.conf"
-if [[ ! -f "$PHP_FPM_CONF" ]]; then
-    cat >"$PHP_FPM_CONF" <<EOF
-# minimal php-fpm wiring
-<FilesMatch \.php$>
-    SetHandler "proxy:unix:/run/php/php${PHP_VER}-fpm.sock|fcgi://localhost/"
-</FilesMatch>
+
+ZABBIX_APACHE_CONF="/etc/apache2/conf-available/zabbix.conf"
+if [[ ! -f "$ZABBIX_APACHE_CONF" ]]; then
+    cat > "$ZABBIX_APACHE_CONF" <<EOF
+# filepath: /etc/apache2/conf-available/zabbix.conf
+Alias /zabbix /usr/share/zabbix
+<Directory "/usr/share/zabbix">
+    Options FollowSymLinks
+    AllowOverride None
+    Require all granted
+    DirectoryIndex index.php
+</Directory>
+
+# PHP-FPM via unix socket
+<IfModule proxy_fcgi_module>
+    <FilesMatch \.php$>
+        SetHandler "proxy:unix:/run/php/php${PHP_VER}-fpm.sock|fcgi://localhost/"
+    </FilesMatch>
+</IfModule>
 EOF
 fi
+
 if command -v a2enconf >/dev/null 2>&1; then
-    a2enconf "php${PHP_VER}-fpm" || a2enconf "$(basename "$PHP_FPM_CONF" .conf)" || true
+    a2enconf zabbix || ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/zabbix.conf || true
+fi
+
+# restart/reload apache to pick up conf (php-fpm should already be enabled earlier)
+if systemctl is-active --quiet apache2; then
+    systemctl reload apache2 || systemctl restart apache2 || true
+else
+    systemctl enable --now apache2 || true
 fi
 
 # restart services to apply clean Apache + PHP-FPM wiring
@@ -287,19 +300,6 @@ cat > "$FRONTEND_CONF" <<EOF
 ?>
 EOF
 
-    for i in {1..30}; do
-        TOKEN="$(curl -s -X POST -H 'Content-Type: application/json' \
-            -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
-            "http://127.0.0.1/zabbix/api_jsonrpc.php" | jq -r '.result // empty' || true)"
-        [[ -n "$TOKEN" ]] && break
-        sleep 2
-    done
-    if [[ -n "$TOKEN" ]]; then
-        curl -s -X POST -H 'Content-Type: application/json' \
-            -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"1\",\"passwd\":\"$ZABBIX_ADMIN_PASS\"},\"auth\":\"$TOKEN\",\"id\":1}" \
-            "http://127.0.0.1/zabbix/api_jsonrpc.php" >/dev/null || true
-        echo -e "${GREEN}[OK] Admin password updated.${NC}"
-    else
         echo -e "${YELLOW}[WARN] Could not set Admin password automatically. You can change it in the UI.${NC}"
     fi
 fi
