@@ -300,10 +300,6 @@ cat > "$FRONTEND_CONF" <<EOF
 ?>
 EOF
 
-        echo -e "${YELLOW}[WARN] Could not set Admin password automatically. You can change it in the UI.${NC}"
-    fi
-fi
-
 # cleanup temporary files and packages
 echo -e "${GREEN}[INFO] cleaning up temporary files...${NC}"
 rm -f /tmp/zabbix-release.deb
