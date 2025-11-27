@@ -72,47 +72,41 @@ else
     esac
 fi
 
-ensure_php_fpm_baseline() {
-    local base="/etc/php/${PHP_VER}/fpm"
-    mkdir -p "${base}/pool.d" /run/php
-    [[ -f "${base}/php-fpm.conf" ]] || cat >"${base}/php-fpm.conf" <<EOF
-[global]
-pid = /run/php/php${PHP_VER}-fpm.pid
-error_log = /var/log/php${PHP_VER}-fpm.log
-include=/etc/php/${PHP_VER}/fpm/pool.d/*.conf
-EOF
-    [[ -f "${base}/pool.d/www.conf" ]] || cat >"${base}/pool.d/www.conf" <<EOF
-[www]
-user = www-data
-group = www-data
-listen = /run/php/php${PHP_VER}-fpm.sock
-listen.owner = www-data
-listen.group = www-data
-pm = dynamic
-pm.max_children = 5
-pm.start_servers = 2
-pm.min_spare_servers = 1
-pm.max_spare_servers = 3
-EOF
-}
-ensure_php_fpm_baseline
-
-mkdir -p /etc/mysql
-[[ -f /etc/mysql/mariadb.cnf ]] || echo "# placeholder" > /etc/mysql/mariadb.cnf
+# Create runtime directories (but NOT config files - let packages create those)
+mkdir -p /run/php 2>/dev/null || true
 
 echo -e "${GREEN}[INFO] installing required packages...${NC}"
 apt update -y
+
+# Pre-create directories that packages expect (fixes reinstall issues)
+mkdir -p /var/lib/snmp /etc/snmp
+chown -R Debian-snmp:Debian-snmp /var/lib/snmp 2>/dev/null || true
+
+# Remove stale PHP module ini files that block reinstall
+if [[ -d /etc/php ]]; then
+    find /etc/php -name "*.ini" -size 0 -delete 2>/dev/null || true
+fi
+
 PKGS=(wget curl gnupg2 jq apt-transport-https
       php-cli php-fpm php-mysql php-xml php-bcmath php-mbstring php-ldap php-gd php-zip php-curl
       mariadb-server mariadb-client rsync socat ssl-cert fping snmpd apache2)
 
 set +e
-apt -o APT::Install-Recommends=false install -y "${PKGS[@]}"
+# Fix any broken packages first
+dpkg --configure -a 2>/dev/null || true
+apt --fix-broken install -y 2>/dev/null || true
+
+# Use dpkg options to auto-accept package maintainer config files (prevents interactive prompts)
+apt -o APT::Install-Recommends=false -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confnew" install -y "${PKGS[@]}"
 APT_STATUS=$?
 if (( APT_STATUS != 0 )); then
     echo -e "${YELLOW}[WARN] retrying fix-broken...${NC}"
+    # Ensure snmpd directories exist
+    mkdir -p /var/lib/snmp /etc/snmp
+    chown -R Debian-snmp:Debian-snmp /var/lib/snmp 2>/dev/null || true
+    dpkg --configure -a 2>/dev/null || true
     apt --fix-broken install -y
-    apt -o APT::Install-Recommends=false install -y "${PKGS[@]}"
+    apt -o APT::Install-Recommends=false -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confnew" install -y "${PKGS[@]}"
 fi
 set -e
 
@@ -122,7 +116,7 @@ dpkg -i /tmp/zabbix-release.deb
 apt update -y
 
 echo -e "${GREEN}[INFO] installing Zabbix packages...${NC}"
-apt -o APT::Install-Recommends=false install -y \
+apt -o APT::Install-Recommends=false -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confnew" install -y \
     zabbix-server-mysql zabbix-frontend-php zabbix-sql-scripts zabbix-agent
 
 apt -y purge 'libapache2-mod-php*' || true
@@ -215,10 +209,17 @@ ServerActive=$ZABBIX_IP
 Hostname=$(hostname)
 EOF
 
-echo -e "${GREEN}[INFO] setting PHP timezone...${NC}"
+echo -e "${GREEN}[INFO] setting PHP timezone and performance settings...${NC}"
 for SAPI in fpm cli; do
     PHP_INI="/etc/php/${PHP_VER}/${SAPI}/php.ini"
-    sed -i "s|^;*date.timezone =.*|date.timezone = UTC|" "$PHP_INI" || true
+    if [[ -f "$PHP_INI" ]]; then
+        sed -i "s|^;*date.timezone =.*|date.timezone = UTC|" "$PHP_INI" || true
+        sed -i "s|^;*post_max_size =.*|post_max_size = 16M|" "$PHP_INI" || true
+        sed -i "s|^;*max_execution_time =.*|max_execution_time = 300|" "$PHP_INI" || true
+        sed -i "s|^;*max_input_time =.*|max_input_time = 300|" "$PHP_INI" || true
+        sed -i "s|^;*memory_limit =.*|memory_limit = 128M|" "$PHP_INI" || true
+        sed -i "s|^;*upload_max_filesize =.*|upload_max_filesize = 2M|" "$PHP_INI" || true
+    fi
 done
 
 ensure_php_exts() {
@@ -239,21 +240,60 @@ systemctl restart "php${PHP_VER}-fpm" || true
 
 echo -e "${GREEN}[INFO] creating frontend configuration...${NC}"
 FRONTEND_CONF="/etc/zabbix/web/zabbix.conf.php"
-FRONTEND_DB_TYPE="MYSQLI"
+mkdir -p /etc/zabbix/web
 cat > "$FRONTEND_CONF" <<EOF
 <?php
-\$DB['TYPE']     = '${FRONTEND_DB_TYPE}';
+\$DB['TYPE']     = 'MYSQL';
 \$DB['SERVER']   = 'localhost';
 \$DB['PORT']     = '0';
 \$DB['DATABASE'] = '$DB_NAME';
 \$DB['USER']     = '$DB_USER';
 \$DB['PASSWORD'] = '$DB_PASS';
+\$DB['SCHEMA']   = '';
+\$DB['ENCRYPTION'] = false;
+\$DB['KEY_FILE'] = '';
+\$DB['CERT_FILE'] = '';
+\$DB['CA_FILE'] = '';
+\$DB['VERIFY_HOST'] = false;
+\$DB['CIPHER_LIST'] = '';
+\$DB['VAULT'] = '';
+\$DB['VAULT_URL'] = '';
+\$DB['VAULT_PREFIX'] = '';
+\$DB['VAULT_DB_PATH'] = '';
+\$DB['VAULT_TOKEN'] = '';
+\$DB['VAULT_CERT_FILE'] = '';
+\$DB['VAULT_KEY_FILE'] = '';
+\$DB['DOUBLE_IEEE754'] = true;
+\$ZBX_SERVER      = 'localhost';
+\$ZBX_SERVER_PORT = '10051';
+\$ZBX_SERVER_NAME = 'Zabbix Server';
+\$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
 ?>
 EOF
 
 echo -e "${GREEN}[INFO] cleaning up...${NC}"
 rm -f /tmp/zabbix-release.deb
 apt autoremove -y
+
+echo -e "${GREEN}[INFO] starting and enabling Zabbix services...${NC}"
+systemctl enable zabbix-server zabbix-agent || true
+systemctl restart zabbix-server zabbix-agent || true
+systemctl restart "php${PHP_VER}-fpm" || true
+systemctl restart apache2 || true
+
+# Wait for Zabbix server to start
+echo -e "${GREEN}[INFO] waiting for Zabbix server to start...${NC}"
+for i in {1..30}; do
+    if systemctl is-active --quiet zabbix-server; then
+        echo -e "${GREEN}[OK] Zabbix server is running.${NC}"
+        break
+    fi
+    sleep 1
+done
+
+if ! systemctl is-active --quiet zabbix-server; then
+    echo -e "${YELLOW}[WARN] Zabbix server may not have started. Check: systemctl status zabbix-server${NC}"
+fi
 
 echo -e "${GREEN}[OK] Zabbix installation complete!${NC}"
 echo "Access frontend at: http://$ZABBIX_IP/zabbix"
