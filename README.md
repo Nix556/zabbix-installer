@@ -12,13 +12,13 @@ Fully automated interactive Bash scripts to **install** and **uninstall** Zabbix
 
 ## Features
 
-- **Full Zabbix 7.4 stack** — Server, Frontend, and Agent
-- **PHP-FPM** — Modern setup using unix sockets (no mod_php)
-- **Automated database setup** — Creates database, user, and imports schema
-- **Frontend configuration** — Auto-generates `/etc/zabbix/web/zabbix.conf.php`
-- **PHP tuning** — Sets required values (post_max_size, max_execution_time, etc.)
-- **Clean uninstall** — Removes everything including database, with option to purge full stack
-- **Reinstall-friendly** — Handles broken packages and leftover files from previous installations
+- **Full Zabbix 7.4 stack**: Server, Frontend, and Agent
+- **PHP-FPM**: Modern setup using unix sockets (no mod_php)
+- **Automated database setup**: Creates database, user, and imports schema
+- **Frontend configuration**: Auto-generates `/etc/zabbix/web/zabbix.conf.php`
+- **PHP tuning**: Sets required values (post_max_size, max_execution_time, etc.)
+- **Clean uninstall**: Removes everything including database, with option to purge full stack
+- **Reinstall-friendly**: Handles broken packages and leftover files from previous installations
 
 ---
 
@@ -159,11 +159,11 @@ systemctl restart php8.2-fpm
 
 ## Roadmap
 
-- [ ] **UI improvements** — Progress spinners and cleaner output
-- [ ] **API automation** — Script to configure Zabbix via API (hosts, templates, etc.)
-- [ ] **Additional OS support** — Rocky Linux, AlmaLinux
-- [ ] **Backup script** — Export database and configuration
-- [ ] **Update script** — In-place Zabbix upgrades
+- [ ] UI improvements (progress spinners, cleaner output)
+- [ ] API automation script to configure Zabbix (hosts, templates, etc.)
+- [ ] Additional OS support (Rocky Linux, AlmaLinux)
+- [ ] Backup script for database and configuration
+- [ ] Update script for in-place Zabbix upgrades
 
 ---
 
